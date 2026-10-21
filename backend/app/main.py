@@ -514,6 +514,8 @@ async def save_review(
         extracted.is_verified = True
         db.commit()
 
+    sub_group = (data.get("sub_group") or "").strip() or None
+
     requisition = (
         db.query(Requisition)
         .filter(
@@ -521,6 +523,7 @@ async def save_review(
             Requisition.payment_category_id == category.id,
             Requisition.payee_name == payee_name,
             Requisition.period == period,
+            Requisition.sub_group == sub_group,
         )
         .first()
     )
@@ -542,6 +545,7 @@ async def save_review(
                     payee_name=payee_name,
                     period=period,
                     frequency=category.frequency,
+                    sub_group=sub_group, 
                     applicant="Juliana",
                     nature="Payment Requisition",
                     total_amount=0.0,
@@ -1180,6 +1184,7 @@ async def get_requisition(req_id: UUID, db: Session = Depends(get_db)):
         "nature": req.nature,
         "period": req.period,
         "frequency": req.frequency,
+        "sub_group": req.sub_group,  
         "total_amount": req.total_amount,
         "status": req.status,
         "created_date": req.created_date.isoformat() if req.created_date else None,

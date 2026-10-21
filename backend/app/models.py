@@ -99,11 +99,9 @@ class Requisition(Base):
 
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     pr_number = Column(String(80), unique=True, nullable=False)
-
+    
     company_id = Column(Uuid, ForeignKey("companies.id"), nullable=True)
-    payment_category_id = Column(
-        Uuid, ForeignKey("payment_categories.id"), nullable=True
-    )
+    payment_category_id = Column(Uuid, ForeignKey("payment_categories.id"), nullable=True)
     payee_id = Column(Uuid, ForeignKey("payees.id"), nullable=True)
 
     company_name = Column(String(200), nullable=True)
@@ -116,6 +114,8 @@ class Requisition(Base):
 
     period = Column(String(20), nullable=True)
     frequency = Column(String(20), nullable=True)
+
+    sub_group = Column(String(100), nullable=True)
 
     total_amount = Column(Float, nullable=False, default=0.0)
     currency = Column(String(10), default="HKD")
@@ -130,7 +130,6 @@ class Requisition(Base):
         back_populates="requisition",
         cascade="all, delete-orphan",
     )
-
 
 class LineItem(Base):
     __tablename__ = "line_items"

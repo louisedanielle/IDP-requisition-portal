@@ -26,6 +26,7 @@ function Review() {
   const [natureName, setNatureName] = useState('');
   const [payee, setPayee] = useState('');
   const [period, setPeriod] = useState('');
+  const [subGroup, setSubGroup] = useState('');
   const [newPayeeName, setNewPayeeName] = useState('');
   const [newNatureName, setNewNatureName] = useState('');
   const [sharedDate, setSharedDate] = useState('');
@@ -38,7 +39,6 @@ function Review() {
   const [autoFilled, setAutoFilled] = useState(false);
   const [aiPayeeName, setAiPayeeName] = useState(null);
 
-  // Document's declared total (from the "Total" row) — for reference only
   const [documentTotal, setDocumentTotal] = useState(null);
 
   const lastItemRef = useRef(null);
@@ -47,6 +47,7 @@ function Review() {
   const paymentTypeKey = (paymentType || '').trim().toLowerCase();
 
   const isReimbursement = natureKey === 'reimbursement';
+  const isMpf = natureKey.startsWith('mpf');
 
   const FREE_FORM_NATURES = ['group medical', 'mpf'];
   const isFreeForm =
@@ -75,37 +76,15 @@ function Review() {
 
     Promise.all([getExtractedData(docId), getSuggestions(docId)])
       .then(async ([data, sug]) => {
-        // Exclude any line item flagged as the document total
-        let realItems = (data.items || []).filter((it) => !it.is_total);
+        const realItems = (data.items || []).filter((it) => !it.is_total);
+        setItems(realItems);
         setAiPayeeName(sug.ai_payee_name || null);
 
-        // Remember the document's declared total for the mismatch check
-        let docTotal = null;
         if (data.total_amount !== undefined && data.total_amount !== null) {
-          docTotal = Number(data.total_amount);
-          setDocumentTotal(docTotal);
+          setDocumentTotal(Number(data.total_amount));
         } else {
           setDocumentTotal(null);
         }
-
-        // If the document only has a total (no line items), synthesize one
-        if (
-          realItems.length === 0 &&
-          docTotal !== null &&
-          docTotal > 0
-        ) {
-          realItems = [{
-            item_number: 1,
-            date: '',
-            description: 'Total',
-            amount_hkd: docTotal,
-            category: null,
-            is_total: false,
-            _synthesized: true,   // marker so we can style it differently if needed
-          }];
-        }
-
-        setItems(realItems);
 
         if (sug.company_id) {
           setCompanyId(sug.company_id);
@@ -251,6 +230,7 @@ function Review() {
         payment_category_id: natureId,
         payee_name: payee,
         period: period || null,
+        sub_group: subGroup || null,
       });
       setSaved(true);
       setTimeout(() => navigate('/requisitions'), 1000);
@@ -261,13 +241,11 @@ function Review() {
     }
   };
 
-  // Total = sum of line items, ALWAYS
   const sumOfItems = items.reduce(
     (sum, i) => sum + (parseFloat(i.amount_hkd) || 0),
     0
   );
 
-  // Does the sum match the document's declared total?
   const documentMismatch =
     documentTotal !== null && Math.abs(documentTotal - sumOfItems) > 0.01;
 
@@ -295,6 +273,11 @@ function Review() {
             <FiArrowLeft size={14} /> Back
           </button>
           <h1 className="page-title mb-1">Review Extracted Data</h1>
+          <p className="page-subtitle">
+            {isFreeForm
+              ? 'Write each particular on its own line item, then fill in the amount.'
+              : 'Values below were auto-detected from the document. Adjust as needed, then save.'}
+          </p>
         </div>
         <div className="d-flex gap-2">
           <button
@@ -327,7 +310,6 @@ function Review() {
         </div>
       )}
 
-      {/* Mismatch warning: document total != sum of line items */}
       {documentMismatch && (
         <div className="pro-card mb-3" style={{ borderLeft: '4px solid var(--warning)', background: '#fffbeb' }}>
           <div className="pro-card-body d-flex align-items-start gap-2" style={{ color: '#92400e' }}>
@@ -339,10 +321,25 @@ function Review() {
                 Sum of line items: <strong>HK${sumOfItems.toFixed(2)}</strong>
                 {' '}(difference of HK${Math.abs(documentTotal - sumOfItems).toFixed(2)})
               </div>
-              <div style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
-                The requisition will use the sum of the line items. Please review the amounts.
-              </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {autoFilled && !isFreeForm && !documentMismatch && (
+        <div className="pro-card mb-3" style={{ borderLeft: '4px solid var(--primary)', background: 'var(--primary-light)' }}>
+          <div className="pro-card-body d-flex align-items-center gap-2" style={{ color: 'var(--primary)', fontSize: '0.875rem' }}>
+            ✨ Fields pre-filled from the document
+            {aiPayeeName && <> (AI read payee as: <em>{aiPayeeName}</em>)</>}
+            . Change anything below before saving.
+          </div>
+        </div>
+      )}
+
+      {isFreeForm && (
+        <div className="pro-card mb-3" style={{ borderLeft: '4px solid var(--warning)', background: '#fffbeb' }}>
+          <div className="pro-card-body d-flex align-items-center gap-2" style={{ color: '#92400e', fontSize: '0.875rem' }}>
+            ✍️ <strong>Free-form mode.</strong> Add as many line items as you need. The date applies to the whole PR.
           </div>
         </div>
       )}
@@ -355,7 +352,7 @@ function Review() {
         </div>
       )}
 
-      {/* 5 dropdowns */}
+      {/* 5 dropdowns + sub-group */}
       <div className="pro-card mb-3">
         <div className="pro-card-body">
           <div className="row g-3">
@@ -426,15 +423,36 @@ function Review() {
             </div>
 
             <div className="col-md-3">
-              <label className="form-label-sm">Period</label>
+              <label className="form-label-sm">Period (Year & Month)</label>
               <input
+                type="month"
                 className="form-control"
-                placeholder="2026-06 / 2026 / 2026-06-15"
-                value={period}
+                value={period && /^\d{4}-\d{2}$/.test(period) ? period : ''}
                 onChange={(e) => setPeriod(e.target.value)}
               />
+              <div style={{ fontSize: '0.7rem', color: 'var(--neutral-500)', marginTop: '0.25rem' }}>
+                Format: YYYY-MM
+              </div>
             </div>
           </div>
+
+          {/* MPF package / sub-group */}
+          {isMpf && (
+            <div className="row g-3 mt-1">
+              <div className="col-md-3">
+                <label className="form-label-sm">MPF Package / Plan</label>
+                <input
+                  className="form-control"
+                  placeholder="e.g. HSBC MPF, Manulife, Standard Chartered"
+                  value={subGroup}
+                  onChange={(e) => setSubGroup(e.target.value)}
+                />
+                <div style={{ fontSize: '0.7rem', color: 'var(--neutral-500)', marginTop: '0.25rem' }}>
+                  Optional. Use to split the same payee into separate PRs.
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="row g-3 mt-2">
             <div className="col-md-6 d-flex align-items-end gap-2">
