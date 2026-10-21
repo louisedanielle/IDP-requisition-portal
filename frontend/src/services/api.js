@@ -151,11 +151,6 @@ export const listIncomes = async (params = {}) => {
   return data;
 };
 
-export const getIncome = async (id) => {
-  const { data } = await api.get(`/api/incomes/${id}`);
-  return data;
-};
-
 export const getIncomeStats = async (year) => {
   const { data } = await api.get('/api/dashboard/income-stats', { params: { year } });
   return data;
@@ -163,6 +158,26 @@ export const getIncomeStats = async (year) => {
 
 export const downloadMonthlyReport = (year) => {
   window.open(`${API_URL}/api/dashboard/monthly-report?year=${year}`, '_blank');
+};
+
+export const createCompany = async (name, shortName) => {
+  const { data } = await api.post('/api/companies', { name, short_name: shortName });
+  return data;
+};
+
+export const getIncome = async (id) => {
+  const { data } = await api.get(`/api/incomes/${id}`);
+  return data;
+};
+
+export const updateIncome = async (id, payload) => {
+  const { data } = await api.put(`/api/incomes/${id}`, payload);
+  return data;
+};
+
+export const deleteIncome = async (id) => {
+  const { data } = await api.delete(`/api/incomes/${id}`);
+  return data;
 };
 
 export default api;

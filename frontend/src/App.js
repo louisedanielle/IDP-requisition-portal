@@ -1,7 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Navbar, Nav, Container } from 'react-bootstrap';
-import { FiHome, FiUploadCloud, FiFolder, FiEdit3 } from 'react-icons/fi';
+import { FiHome, FiUploadCloud, FiFolder, FiEdit3, FiDollarSign } from 'react-icons/fi';
 import Dashboard from './pages/Dashboard';
 import Upload from './pages/Upload';
 import Review from './pages/Review';
@@ -9,7 +9,36 @@ import Requisitions from './pages/Requisitions';
 import RequisitionDetail from './pages/RequisitionDetail';
 import ManualInput from './pages/ManualInput';
 import Income from './pages/Income';
-import { FiDollarSign } from 'react-icons/fi';
+import InvoiceDetail from './pages/InvoiceDetail';
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    console.error('Render error:', error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="pro-card m-4">
+          <div className="pro-card-body" style={{ color: 'var(--danger)' }}>
+            <h5>Something went wrong rendering this page.</h5>
+            <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{String(this.state.error)}</pre>
+            <button className="btn btn-outline-primary mt-2" onClick={() => this.setState({ error: null })}>
+              Try again
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function NavLink({ to, icon, children }) {
   const location = useLocation();
@@ -55,15 +84,18 @@ function App() {
       </Navbar>
 
       <div className="main-container">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/upload" element={<Upload />} />
-          <Route path="/manual" element={<ManualInput />} />
-          <Route path="/review" element={<Review />} />
-          <Route path="/requisitions" element={<Requisitions />} />
-          <Route path="/requisitions/:id" element={<RequisitionDetail />} />
-          <Route path="/income" element={<Income />} />
-        </Routes>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/upload" element={<Upload />} />
+            <Route path="/manual" element={<ManualInput />} />
+            <Route path="/review" element={<Review />} />
+            <Route path="/requisitions" element={<Requisitions />} />
+            <Route path="/requisitions/:id" element={<RequisitionDetail />} />
+            <Route path="/income" element={<Income />} />
+            <Route path="/income/:id" element={<InvoiceDetail />} />
+          </Routes>
+        </ErrorBoundary>
       </div>
     </Router>
   );
