@@ -172,6 +172,27 @@ async def create_company_category(
         "payment_type": payment_type.name,
     }
 
+@app.post("/api/companies")
+async def create_company(data: dict, db: Session = Depends(get_db)):
+    name = (data.get("name") or "").strip()
+    short_name = (data.get("short_name") or "").strip().upper()
+
+    if not name:
+        raise HTTPException(400, "Company name is required")
+    if not short_name:
+        # Fallback if no short name is given (e.g., first 3 letters)
+        short_name = name[:3].upper()
+
+    existing = db.query(Company).filter(Company.name == name).first()
+    if existing:
+        return {"id": str(existing.id), "name": existing.name, "short_name": existing.short_name}
+
+    company = Company(name=name, short_name=short_name)
+    db.add(company)
+    db.commit()
+    db.refresh(company)
+    
+    return {"id": str(company.id), "name": company.name, "short_name": company.short_name}
 
 @app.get("/api/payees")
 async def list_payees(db: Session = Depends(get_db)):
