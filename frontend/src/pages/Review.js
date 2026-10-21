@@ -20,17 +20,19 @@ function Review() {
   const [companyCategories, setCompanyCategories] = useState({});
   const [payees, setPayees] = useState([]);
 
+  // Form state
   const [companyId, setCompanyId] = useState('');
   const [paymentType, setPaymentType] = useState('');
   const [natureId, setNatureId] = useState('');
   const [natureName, setNatureName] = useState('');
   const [payee, setPayee] = useState('');
   const [period, setPeriod] = useState('');
-  const [subGroup, setSubGroup] = useState('');
+  const [subGroup, setSubGroup] = useState('');       // 👈 NEW
   const [newPayeeName, setNewPayeeName] = useState('');
   const [newNatureName, setNewNatureName] = useState('');
   const [sharedDate, setSharedDate] = useState('');
 
+  // Data state
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -38,16 +40,16 @@ function Review() {
   const [error, setError] = useState(null);
   const [autoFilled, setAutoFilled] = useState(false);
   const [aiPayeeName, setAiPayeeName] = useState(null);
-
   const [documentTotal, setDocumentTotal] = useState(null);
 
   const lastItemRef = useRef(null);
 
+  // Nature helpers
   const natureKey = (natureName || '').trim().toLowerCase();
   const paymentTypeKey = (paymentType || '').trim().toLowerCase();
 
   const isReimbursement = natureKey === 'reimbursement';
-  const isMpf = natureKey.startsWith('mpf');
+  const isMpf = natureKey.startsWith('mpf');           // 👈 NEW
 
   const FREE_FORM_NATURES = ['group medical', 'mpf'];
   const isFreeForm =
@@ -230,7 +232,7 @@ function Review() {
         payment_category_id: natureId,
         payee_name: payee,
         period: period || null,
-        sub_group: subGroup || null,
+        sub_group: subGroup.trim() || null,          // 👈 send sub_group
       });
       setSaved(true);
       setTimeout(() => navigate('/requisitions'), 1000);
@@ -436,19 +438,19 @@ function Review() {
             </div>
           </div>
 
-          {/* MPF package / sub-group */}
+          {/* MPF Package / Sub-group — only shown when Nature is MPF */}
           {isMpf && (
             <div className="row g-3 mt-1">
-              <div className="col-md-3">
+              <div className="col-md-4">
                 <label className="form-label-sm">MPF Package / Plan</label>
                 <input
                   className="form-control"
-                  placeholder="e.g. HSBC MPF, Manulife, Standard Chartered"
+                  placeholder="e.g. Stanley + Cole, Matao + Jason"
                   value={subGroup}
                   onChange={(e) => setSubGroup(e.target.value)}
                 />
                 <div style={{ fontSize: '0.7rem', color: 'var(--neutral-500)', marginTop: '0.25rem' }}>
-                  Optional. Use to split the same payee into separate PRs.
+                  Optional. Use a different value per PR to keep them separate.
                 </div>
               </div>
             </div>
@@ -506,6 +508,7 @@ function Review() {
         </div>
 
         {isFreeForm ? (
+          /* ---------- FREE-FORM MODE ---------- */
           <div className="pro-card-body">
             <div className="mb-4" style={{ maxWidth: 250 }}>
               <label className="form-label-sm">Date *</label>
@@ -592,6 +595,7 @@ function Review() {
             </div>
           </div>
         ) : (
+          /* ---------- NORMAL / REIMBURSEMENT MODE ---------- */
           <div>
             {items.length === 0 && (
               <div
