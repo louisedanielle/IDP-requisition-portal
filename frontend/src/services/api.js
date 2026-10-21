@@ -132,4 +132,37 @@ export const downloadAllCompaniesAnnualReport = (year) => {
 // ---------- Shared base URL ----------
 export const API_BASE_URL = API_URL;
 
+export const uploadIncomeReport = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const { data } = await api.post('/api/incomes/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data;
+};
+
+export const createIncome = async (payload) => {
+  const { data } = await api.post('/api/incomes', payload);
+  return data;
+};
+
+export const listIncomes = async (params = {}) => {
+  const { data } = await api.get('/api/incomes', { params });
+  return data;
+};
+
+export const getIncome = async (id) => {
+  const { data } = await api.get(`/api/incomes/${id}`);
+  return data;
+};
+
+export const getIncomeStats = async (year) => {
+  const { data } = await api.get('/api/dashboard/income-stats', { params: { year } });
+  return data;
+};
+
+export const downloadMonthlyReport = (year) => {
+  window.open(`${API_URL}/api/dashboard/monthly-report?year=${year}`, '_blank');
+};
+
 export default api;

@@ -8,6 +8,8 @@ import Review from './pages/Review';
 import Requisitions from './pages/Requisitions';
 import RequisitionDetail from './pages/RequisitionDetail';
 import ManualInput from './pages/ManualInput';
+import Income from './pages/Income';
+import { FiDollarSign } from 'react-icons/fi';
 
 function NavLink({ to, icon, children }) {
   const location = useLocation();
@@ -46,6 +48,7 @@ function App() {
               <NavLink to="/upload" icon={<FiUploadCloud size={16}/>}>Upload</NavLink>
               <NavLink to="/manual" icon={<FiEdit3 size={16} />}>Manual Input</NavLink>
               <NavLink to="/requisitions" icon={<FiFolder size={16}/>}>Requisitions</NavLink>
+              <NavLink to="/income" icon={<FiDollarSign size={16} />}>Income</NavLink>
             </Nav>
           </Navbar.Collapse>
         </Container>
@@ -59,6 +62,7 @@ function App() {
           <Route path="/review" element={<Review />} />
           <Route path="/requisitions" element={<Requisitions />} />
           <Route path="/requisitions/:id" element={<RequisitionDetail />} />
+          <Route path="/income" element={<Income />} />
         </Routes>
       </div>
     </Router>

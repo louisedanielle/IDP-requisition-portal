@@ -152,3 +152,60 @@ class LineItem(Base):
     meta = Column(JSON, nullable=True)
 
     requisition = relationship("Requisition", back_populates="line_items")
+
+class Income(Base):
+    """
+    Revenue Sharing Report → Invoice.
+    One Income per (company, customer, period). Line items come from the
+    Revenue Sharing Report's per-branch rows.
+    """
+    __tablename__ = "incomes"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    invoice_number = Column(String(80), unique=True, nullable=False)
+    company_id = Column(Uuid, ForeignKey("companies.id"), nullable=True)
+    company_name = Column(String(200), nullable=False)
+
+    customer_name = Column(String(200), nullable=False)   # e.g. "Medicare Solutions Sdn Bhd"
+    customer_address = Column(Text, nullable=True)
+
+    period = Column(String(20), nullable=True)            # "2026-08"
+    date_issued = Column(DateTime, default=datetime.utcnow)
+    due_date = Column(DateTime, nullable=True)
+
+    # Currency: RM (primary from the report), plus HKD and USD
+    currency = Column(String(10), default="RM")
+    total_rm = Column(Float, nullable=False, default=0.0)
+    total_hkd = Column(Float, nullable=True)
+    total_usd = Column(Float, nullable=True)
+
+    status = Column(String(50), default="draft")          # draft | sent | paid
+    statement_ref = Column(String(80), nullable=True)     # e.g. MSCS.2026.08.001
+    notes = Column(Text, nullable=True)
+
+    created_date = Column(DateTime, default=datetime.utcnow)
+    paid_date = Column(DateTime, nullable=True)
+
+    line_items = relationship(
+        "IncomeLineItem",
+        back_populates="income",
+        cascade="all, delete-orphan",
+    )
+
+
+class IncomeLineItem(Base):
+    __tablename__ = "income_line_items"
+
+    id = Column(Uuid, primary_key=True, default=uuid.uuid4)
+    income_id = Column(Uuid, ForeignKey("incomes.id"), nullable=False)
+    item_number = Column(Integer, nullable=False)
+
+    description = Column(Text, nullable=False)
+    invoice_no = Column(String(100), nullable=True)
+    machine_serial = Column(String(100), nullable=True)
+    machine_runs = Column(Integer, nullable=True)
+    rate = Column(Float, nullable=True)
+    amount = Column(Float, nullable=False)
+    currency = Column(String(10), default="RM")
+
+    income = relationship("Income", back_populates="line_items")

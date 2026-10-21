@@ -5,6 +5,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from uuid import UUID
+from .services.revenue_service import RevenueService
+from .services.invoice_generator import InvoiceGenerator
+from .models import Income, IncomeLineItem
 import os
 
 from .config import settings
@@ -1465,6 +1468,447 @@ async def export_excel(req_id: UUID, db: Session = Depends(get_db)):
         filename=f"{req.pr_number}_Detail List.xlsx",
     )
 
+revenue_service = RevenueService()
+invoice_generator = InvoiceGenerator()
+
+# ============ INCOME / INVOICES ============
+
+@app.post("/api/incomes/upload")
+async def upload_income_report(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Accepts a Revenue Sharing Report or similar invoice-ready PDF/image.
+    Extracts the data synchronously (no Celery needed for this).
+    """
+    allowed = ["image/jpeg", "image/png", "application/pdf"]
+    if file.content_type not in allowed:
+        raise HTTPException(400, f"File type not allowed. Allowed: {allowed}")
+
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = os.path.join(settings.UPLOAD_DIR, f"{timestamp}_{file.filename}")
+    content = await file.read()
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+    result = await revenue_service.extract_revenue_report(filepath)
+    if result.get("error"):
+        raise HTTPException(500, f"Extraction failed: {result['error']}")
+
+    return result
+
+
+@app.post("/api/incomes")
+async def create_income(data: dict, db: Session = Depends(get_db)):
+    """
+    Save a reviewed income report as an Income record with line items.
+    Body: same shape as /api/incomes/upload returns, plus company_id.
+    """
+    company_id = _to_uuid(data.get("company_id"))
+    company = db.query(Company).filter(Company.id == company_id).first() if company_id else None
+    if not company:
+        raise HTTPException(400, "Valid company_id is required")
+
+    # Generate invoice number
+    year = datetime.utcnow().year
+    prefix = f"LSI{year}"
+    last = (
+        db.query(Income)
+        .filter(Income.invoice_number.like(f"{prefix}%"))
+        .order_by(Income.invoice_number.desc())
+        .first()
+    )
+    if last:
+        try:
+            last_num = int(last.invoice_number.replace(prefix, ""))
+            next_num = last_num + 1
+        except ValueError:
+            next_num = 1
+    else:
+        next_num = 1
+    invoice_number = f"{prefix}{next_num:04d}"
+
+    income = Income(
+        invoice_number=invoice_number,
+        company_id=company.id,
+        company_name=company.name,
+        customer_name=data.get("customer_name") or "Unknown Customer",
+        customer_address=data.get("customer_address"),
+        period=_normalize_period(data.get("period")),
+        date_issued=_parse_date(data.get("date_issued")) or datetime.utcnow(),
+        total_rm=float(data.get("total_rm") or 0),
+        total_hkd=float(data["total_hkd"]) if data.get("total_hkd") else None,
+        total_usd=float(data["total_usd"]) if data.get("total_usd") else None,
+        currency="RM",
+        status="draft",
+        statement_ref=data.get("statement_ref"),
+        notes=data.get("notes"),
+    )
+    db.add(income)
+    db.flush()
+
+    for idx, li in enumerate(data.get("lines", []), start=1):
+        line = IncomeLineItem(
+            income_id=income.id,
+            item_number=idx,
+            description=li.get("branch") or li.get("description") or "",
+            invoice_no=li.get("invoice_no"),
+            machine_serial=li.get("machine_serial"),
+            machine_runs=int(li.get("machine_runs") or 0),
+            rate=float(li.get("rate_rm") or 0),
+            amount=float(li.get("amount_rm") or 0),
+            currency="RM",
+        )
+        db.add(line)
+
+    db.commit()
+    return {"id": str(income.id), "invoice_number": income.invoice_number}
+
+
+@app.get("/api/incomes")
+async def list_incomes(
+    company_id: UUID | None = None,
+    period: str | None = None,
+    db: Session = Depends(get_db),
+):
+    q = db.query(Income)
+    if company_id:
+        q = q.filter(Income.company_id == company_id)
+    if period:
+        q = q.filter(Income.period == period)
+
+    rows = q.order_by(Income.date_issued.desc()).all()
+    return [
+        {
+            "id": str(r.id),
+            "invoice_number": r.invoice_number,
+            "company_name": r.company_name,
+            "customer_name": r.customer_name,
+            "period": r.period,
+            "date_issued": r.date_issued.isoformat() if r.date_issued else None,
+            "currency": r.currency,
+            "total_rm": r.total_rm,
+            "total_hkd": r.total_hkd,
+            "total_usd": r.total_usd,
+            "status": r.status,
+        }
+        for r in rows
+    ]
+
+
+@app.get("/api/incomes/{income_id}")
+async def get_income(income_id: UUID, db: Session = Depends(get_db)):
+    r = db.query(Income).filter(Income.id == income_id).first()
+    if not r:
+        raise HTTPException(404, "Income not found")
+
+    lines = (
+        db.query(IncomeLineItem)
+        .filter(IncomeLineItem.income_id == income_id)
+        .order_by(IncomeLineItem.item_number)
+        .all()
+    )
+
+    return {
+        "id": str(r.id),
+        "invoice_number": r.invoice_number,
+        "company_name": r.company_name,
+        "customer_name": r.customer_name,
+        "customer_address": r.customer_address,
+        "period": r.period,
+        "date_issued": r.date_issued.isoformat() if r.date_issued else None,
+        "currency": r.currency,
+        "total_rm": r.total_rm,
+        "total_hkd": r.total_hkd,
+        "total_usd": r.total_usd,
+        "status": r.status,
+        "statement_ref": r.statement_ref,
+        "notes": r.notes,
+        "line_items": [
+            {
+                "id": str(li.id),
+                "item_number": li.item_number,
+                "description": li.description,
+                "invoice_no": li.invoice_no,
+                "machine_serial": li.machine_serial,
+                "machine_runs": li.machine_runs,
+                "rate": li.rate,
+                "amount": li.amount,
+                "currency": li.currency,
+            }
+            for li in lines
+        ],
+    }
+
+
+@app.get("/api/incomes/{income_id}/export/word")
+async def export_invoice(income_id: UUID, db: Session = Depends(get_db)):
+    r = db.query(Income).filter(Income.id == income_id).first()
+    if not r:
+        raise HTTPException(404, "Income not found")
+
+    lines = (
+        db.query(IncomeLineItem)
+        .filter(IncomeLineItem.income_id == income_id)
+        .order_by(IncomeLineItem.item_number)
+        .all()
+    )
+
+    doc_data = {
+        "invoice_number": r.invoice_number,
+        "company_name": r.company_name,
+        "customer_name": r.customer_name,
+        "customer_address": r.customer_address,
+        "date_issued": r.date_issued.strftime("%d-%b-%Y") if r.date_issued else "",
+        "line_items": [
+            {
+                "description": li.description,
+                "invoice_no": li.invoice_no,
+                "machine_runs": li.machine_runs,
+                "rate": li.rate,
+                "amount": li.amount,
+            }
+            for li in lines
+        ],
+        "total_rm": r.total_rm,
+        "total_hkd": r.total_hkd,
+        "total_usd": r.total_usd,
+        "notes": r.notes or "",
+        "payment_terms": f"Monthly Revenue Sharing - {r.period or ''}. Payment due within 15 days.",
+    }
+
+    path = invoice_generator.generate_invoice_docx(doc_data)
+
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=f"{r.invoice_number}.docx",
+    )
+
+
+@app.get("/api/dashboard/income-stats")
+async def get_income_stats(
+    year: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Income breakdown for a year:
+      - Total income (RM, and HKD if available)
+      - Breakdown by company
+      - Month × Company income matrix
+    """
+    year = (year or datetime.utcnow().strftime("%Y")).strip()
+
+    rows = (
+        db.query(Income)
+        .filter(Income.period.like(f"{year}%"))
+        .all()
+    )
+
+    months = ["01","02","03","04","05","06","07","08","09","10","11","12"]
+    by_company: dict = {}
+    total_rm = 0.0
+    total_hkd = 0.0
+    monthly_totals = {m: {"rm": 0.0, "hkd": 0.0} for m in months}
+
+    for r in rows:
+        company = r.company_name or "Unknown"
+        _, month = _split_period(r.period)
+
+        by_company.setdefault(company, {
+            "total_rm": 0.0, "total_hkd": 0.0, "invoices": 0,
+            "monthly": {m: {"rm": 0.0, "hkd": 0.0} for m in months},
+        })
+        by_company[company]["total_rm"] += r.total_rm or 0
+        by_company[company]["total_hkd"] += r.total_hkd or 0
+        by_company[company]["invoices"] += 1
+
+        if month in months:
+            by_company[company]["monthly"][month]["rm"] += r.total_rm or 0
+            by_company[company]["monthly"][month]["hkd"] += r.total_hkd or 0
+            monthly_totals[month]["rm"] += r.total_rm or 0
+            monthly_totals[month]["hkd"] += r.total_hkd or 0
+
+        total_rm += r.total_rm or 0
+        total_hkd += r.total_hkd or 0
+
+    return {
+        "year": year,
+        "total_rm": round(total_rm, 2),
+        "total_hkd": round(total_hkd, 2),
+        "by_company": by_company,
+        "monthly_totals": monthly_totals,
+    }
+
+
+@app.get("/api/dashboard/monthly-report")
+async def monthly_report_excel(
+    year: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Download a full Income vs Expenses Excel report:
+      Sheet 1: Monthly summary (income by company per month, expenses by category)
+      Sheet 2: Income detail (one row per invoice)
+      Sheet 3: Expense detail (one row per requisition)
+    """
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, Border, Side
+    import tempfile
+
+    year = (year or datetime.utcnow().strftime("%Y")).strip()
+
+    incomes = db.query(Income).filter(Income.period.like(f"{year}%")).all()
+    expenses = (
+        db.query(Requisition)
+        .filter(Requisition.period.like(f"{year}%"))
+        .all()
+    )
+
+    wb = openpyxl.Workbook()
+    bold = Font(bold=True)
+    thin = Side(style="thin", color="CCCCCC")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    right = Alignment(horizontal="right")
+    center = Alignment(horizontal="center")
+
+    months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+
+    # ---------- Sheet 1: Monthly Summary ----------
+    ws = wb.active
+    ws.title = f"Summary {year}"
+
+    ws.merge_cells("A1:O1")
+    ws["A1"] = f"Income vs Expenses — {year}"
+    ws["A1"].font = Font(bold=True, size=14)
+
+    header_row = 3
+    ws.cell(row=header_row, column=1, value="Type").font = bold
+    ws.cell(row=header_row, column=2, value="Name").font = bold
+    for i, m in enumerate(months):
+        c = ws.cell(row=header_row, column=3 + i, value=m)
+        c.font = bold
+        c.alignment = center
+    ws.cell(row=header_row, column=3 + len(months), value="Total").font = bold
+
+    total_col = 3 + len(months)
+
+    def add_row(r, type_label, name, monthly_values):
+        ws.cell(row=r, column=1, value=type_label)
+        ws.cell(row=r, column=2, value=name)
+        for i, v in enumerate(monthly_values):
+            c = ws.cell(row=r, column=3 + i, value=round(v, 2))
+            c.number_format = "#,##0.00"
+            c.alignment = right
+        total = ws.cell(row=r, column=total_col, value=f"=SUM(C{r}:N{r})")
+        total.font = bold
+        total.number_format = "#,##0.00"
+        total.alignment = right
+        return r + 1
+
+    # Income by company
+    income_by_company: dict = {}
+    for r in incomes:
+        company = r.company_name or "Unknown"
+        _, month = _split_period(r.period)
+        if month not in [f"{i+1:02d}" for i in range(12)]:
+            continue
+        idx = int(month) - 1
+        income_by_company.setdefault(company, [0.0]*12)
+        income_by_company[company][idx] += r.total_rm or 0
+
+    r = header_row + 1
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
+    ws.cell(row=r, column=1, value="INCOME (RM)").font = Font(bold=True, size=11)
+    r += 1
+    for company in sorted(income_by_company.keys()):
+        r = add_row(r, "Income", company, income_by_company[company])
+
+    # Expenses by category
+    expense_by_cat: dict = {}
+    for e in expenses:
+        cat = e.category_name or "Uncategorized"
+        _, month = _split_period(e.period)
+        if month not in [f"{i+1:02d}" for i in range(12)]:
+            continue
+        idx = int(month) - 1
+        expense_by_cat.setdefault(cat, [0.0]*12)
+        expense_by_cat[cat][idx] += e.total_amount or 0
+
+    r += 1
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
+    ws.cell(row=r, column=1, value="EXPENSES (HKD)").font = Font(bold=True, size=11)
+    r += 1
+    for cat in sorted(expense_by_cat.keys()):
+        r = add_row(r, "Expense", cat, expense_by_cat[cat])
+
+    ws.column_dimensions["A"].width = 12
+    ws.column_dimensions["B"].width = 30
+    for i in range(12):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(3+i)].width = 12
+    ws.column_dimensions[openpyxl.utils.get_column_letter(total_col)].width = 14
+
+    for rr in range(header_row, r):
+        for cc in range(1, total_col + 1):
+            ws.cell(row=rr, column=cc).border = border
+
+    # ---------- Sheet 2: Income Detail ----------
+    wsi = wb.create_sheet("Income Detail")
+    hdr = ["Invoice No", "Company", "Customer", "Period", "Date", "Currency", "Total RM", "Total HKD", "Status"]
+    for i, h in enumerate(hdr, start=1):
+        wsi.cell(row=1, column=i, value=h).font = bold
+
+    for idx, inc in enumerate(incomes, start=2):
+        wsi.cell(row=idx, column=1, value=inc.invoice_number)
+        wsi.cell(row=idx, column=2, value=inc.company_name)
+        wsi.cell(row=idx, column=3, value=inc.customer_name)
+        wsi.cell(row=idx, column=4, value=inc.period)
+        wsi.cell(row=idx, column=5, value=inc.date_issued.strftime("%Y-%m-%d") if inc.date_issued else "")
+        wsi.cell(row=idx, column=6, value=inc.currency)
+        wsi.cell(row=idx, column=7, value=inc.total_rm).number_format = "#,##0.00"
+        wsi.cell(row=idx, column=8, value=inc.total_hkd or 0).number_format = "#,##0.00"
+        wsi.cell(row=idx, column=9, value=inc.status)
+
+    wsi.column_dimensions["A"].width = 18
+    wsi.column_dimensions["B"].width = 30
+    wsi.column_dimensions["C"].width = 30
+    for col in ["D","E","F","G","H","I"]:
+        wsi.column_dimensions[col].width = 14
+
+    # ---------- Sheet 3: Expense Detail ----------
+    wse = wb.create_sheet("Expense Detail")
+    hdr = ["PR No", "Company", "Category", "Payee", "Period", "Total HKD", "Status"]
+    for i, h in enumerate(hdr, start=1):
+        wse.cell(row=1, column=i, value=h).font = bold
+
+    for idx, exp in enumerate(expenses, start=2):
+        wse.cell(row=idx, column=1, value=exp.pr_number)
+        wse.cell(row=idx, column=2, value=exp.company_name)
+        wse.cell(row=idx, column=3, value=exp.category_name)
+        wse.cell(row=idx, column=4, value=exp.payee_name)
+        wse.cell(row=idx, column=5, value=exp.period)
+        wse.cell(row=idx, column=6, value=exp.total_amount).number_format = "#,##0.00"
+        wse.cell(row=idx, column=7, value=exp.status)
+
+    wse.column_dimensions["A"].width = 18
+    wse.column_dimensions["B"].width = 30
+    wse.column_dimensions["C"].width = 22
+    wse.column_dimensions["D"].width = 25
+    wse.column_dimensions["E"].width = 12
+    wse.column_dimensions["F"].width = 14
+    wse.column_dimensions["G"].width = 12
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
+    tmp.close()
+    wb.save(tmp.name)
+
+    return FileResponse(
+        tmp.name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=f"Monthly Report {year}.xlsx",
+    )
 
 # ============ HELPERS ============
 

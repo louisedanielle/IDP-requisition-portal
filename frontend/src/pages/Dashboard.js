@@ -1,22 +1,33 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  FiUploadCloud, FiEdit3, FiFolder, FiFileText, FiTag, FiDownload,
+  FiUploadCloud, FiEdit3, FiFolder, FiFileText, FiTag,
+  FiDownload, FiDollarSign,
 } from 'react-icons/fi';
 import {
   getDashboardStats,
+  getIncomeStats,
   downloadCompanyAnnualReport,
   downloadAllCompaniesAnnualReport,
+  downloadMonthlyReport,
 } from '../services/api';
 
 function Dashboard() {
   const [stats, setStats] = useState(null);
+  const [incomeStats, setIncomeStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getDashboardStats()
-      .then((data) => setStats(data))
-      .catch((err) => console.error(err))
+    const currentYear = new Date().getFullYear().toString();
+    Promise.all([
+      getDashboardStats(),
+      getIncomeStats(currentYear),
+    ])
+      .then(([statsData, incStats]) => {
+        setStats(statsData);
+        setIncomeStats(incStats);
+      })
+      .catch((err) => console.error('Dashboard load error:', err))
       .finally(() => setLoading(false));
   }, []);
 
@@ -34,6 +45,10 @@ function Dashboard() {
   const thisYear = stats?.this_year || { label: '', count: 0, total: 0 };
   const byCompany = stats?.by_company_this_year || {};
 
+  const totalIncomeRm = incomeStats?.total_rm || 0;
+  const totalIncomeHkd = incomeStats?.total_hkd || 0;
+  const incomeByCompany = incomeStats?.by_company || {};
+
   const fmt = (n) =>
     Number(n || 0).toLocaleString('en-US', {
       minimumFractionDigits: 2,
@@ -43,31 +58,54 @@ function Dashboard() {
   return (
     <div>
       {/* Header */}
-      <div className="page-header mb-4">
-        <h1 className="page-title">Dashboard</h1>
-        <p className="page-subtitle">Overview of payment requisitions</p>
+      <div className="page-header mb-4 d-flex justify-content-between align-items-start">
+        <div>
+          <h1 className="page-title">Dashboard</h1>
+          <p className="page-subtitle">Overview of payment requisitions & revenue</p>
+        </div>
+        <button
+          className="btn btn-sm btn-outline-success d-flex align-items-center gap-1"
+          onClick={() => downloadMonthlyReport(thisYear.label)}
+          title="Download Income vs Expenses Report"
+        >
+          <FiDownload size={14} /> Monthly Report
+        </button>
       </div>
 
       {/* ---------- Stat cards ---------- */}
       <div className="row g-3 mb-4">
         <div className="col-lg-4 col-md-6">
           <div className="stat-card h-100">
-            <div className="stat-label">Total Amount Last Month · {lastMonth.label}</div>
+            <div className="stat-label">Amount Paid · {lastMonth.label}</div>
             <div className="stat-value success">HK${fmt(lastMonth.total)}</div>
           </div>
         </div>
 
         <div className="col-lg-4 col-md-6">
           <div className="stat-card h-100">
-            <div className="stat-label">Total Requisitions Current Month· {thisMonth.label}</div>
+            <div className="stat-label">Requisitions · {thisMonth.label}</div>
             <div className="stat-value primary">{thisMonth.count}</div>
           </div>
         </div>
 
         <div className="col-lg-4 col-md-6">
           <div className="stat-card h-100">
-            <div className="stat-label">Total Amount Current Month · {thisMonth.label}</div>
+            <div className="stat-label">Amount Paid · {thisMonth.label}</div>
             <div className="stat-value success">HK${fmt(thisMonth.total)}</div>
+          </div>
+        </div>
+
+        <div className="col-lg-6 col-md-6">
+          <div className="stat-card h-100">
+            <div className="stat-label">Requisitions · {thisYear.label}</div>
+            <div className="stat-value primary">{thisYear.count}</div>
+          </div>
+        </div>
+
+        <div className="col-lg-6 col-md-6">
+          <div className="stat-card h-100">
+            <div className="stat-label">Amount Paid · {thisYear.label}</div>
+            <div className="stat-value success">HK${fmt(thisYear.total)}</div>
           </div>
         </div>
       </div>
@@ -85,24 +123,89 @@ function Dashboard() {
             <Link to="/manual" className="btn btn-outline-primary d-flex align-items-center gap-2">
               <FiEdit3 size={16} /> Manual Input
             </Link>
-            <Link to="/requisitions" className="btn btn-outline-primary d-flex align-items-center gap-2">
-              <FiFolder size={16} /> Browse Requisitions
+            <Link to="/income" className="btn btn-outline-success d-flex align-items-center gap-2">
+              <FiDollarSign size={16} /> Upload Revenue Report
             </Link>
             <Link to="/requisitions" className="btn btn-outline-primary d-flex align-items-center gap-2">
-              <FiFileText size={16} /> View All PRs
+              <FiFolder size={16} /> Browse Requisitions
             </Link>
           </div>
         </div>
       </div>
 
-      {/* ---------- Per-Company Category Breakdown (this year) ---------- */}
+      {/* ================================================================ */}
+      {/* INCOME SECTION                                                   */}
+      {/* ================================================================ */}
+      {incomeStats && (
+        <div className="mb-5">
+          <div className="d-flex align-items-center mb-3" style={{ gap: 8 }}>
+            <FiDollarSign style={{ color: 'var(--success)' }} size={18} />
+            <h5 style={{ margin: 0, fontWeight: 600, flex: 1 }}>
+              Income by Company · {thisYear.label}
+            </h5>
+          </div>
+
+          <div className="row g-3 mb-3">
+            <div className="col-md-6">
+              <div className="stat-card h-100" style={{ borderLeft: '4px solid var(--success)' }}>
+                <div className="stat-label">Total Income (RM)</div>
+                <div className="stat-value success">RM {fmt(totalIncomeRm)}</div>
+              </div>
+            </div>
+            <div className="col-md-6">
+              <div className="stat-card h-100" style={{ borderLeft: '4px solid var(--success)' }}>
+                <div className="stat-label">Total Income (HKD est.)</div>
+                <div className="stat-value success">HK${fmt(totalIncomeHkd)}</div>
+              </div>
+            </div>
+          </div>
+
+          {Object.entries(incomeByCompany).map(([company, data]) => (
+            <div key={`inc-${company}`} className="pro-card mb-3" style={{ overflow: 'hidden' }}>
+              <div
+                style={{
+                  padding: '16px 20px',
+                  background: 'var(--success)',
+                  color: 'white',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                }}
+              >
+                <FiDollarSign size={18} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: '1rem' }}>{company}</div>
+                  <div style={{ fontSize: '0.75rem', opacity: 0.85, marginTop: 2 }}>
+                    {data.invoices} invoice{data.invoices !== 1 ? 's' : ''}
+                  </div>
+                </div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>
+                  RM {fmt(data.total_rm)}
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {Object.keys(incomeByCompany).length === 0 && (
+            <div className="pro-card">
+              <div className="pro-card-body text-center py-4" style={{ color: 'var(--neutral-500)' }}>
+                No income recorded for {thisYear.label} yet.
+                <Link to="/income" className="ms-2">Upload a revenue report</Link>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ================================================================ */}
+      {/* EXPENSES / REQUISITIONS SECTION                                  */}
+      {/* ================================================================ */}
       {Object.keys(byCompany).length > 0 && (
         <>
-          {/* Section header */}
-          <div className="d-flex align-items-center mb-3" style={{ gap: 8 }}>
+          <div className="d-flex align-items-center mb-3 mt-4" style={{ gap: 8 }}>
             <FiTag style={{ color: 'var(--neutral-400)' }} size={16} />
             <h5 style={{ margin: 0, fontWeight: 600, flex: 1 }}>
-              Spend by Company &amp; Category · {thisYear.label}
+              Expenses by Company &amp; Category · {thisYear.label}
             </h5>
             <button
               className="btn btn-sm btn-outline-primary d-flex align-items-center gap-1"
@@ -203,7 +306,6 @@ function Dashboard() {
                         gap: 16,
                       }}
                     >
-                      {/* Category name */}
                       <div
                         style={{
                           flex: 1,
@@ -219,7 +321,6 @@ function Dashboard() {
                         {cat}
                       </div>
 
-                      {/* PR count */}
                       <div
                         style={{
                           width: 60,
@@ -234,7 +335,6 @@ function Dashboard() {
                         </span>
                       </div>
 
-                      {/* Percentage bar */}
                       <div
                         style={{
                           width: 100,
@@ -257,8 +357,7 @@ function Dashboard() {
                             style={{
                               width: `${Math.min(pct, 100)}%`,
                               height: '100%',
-                              background:
-                                'linear-gradient(90deg, #0ea5e9 0%, #1a4d8f 100%)',
+                              background: 'var(--primary)',
                               borderRadius: 3,
                             }}
                           />
@@ -275,7 +374,6 @@ function Dashboard() {
                         </span>
                       </div>
 
-                      {/* Amount */}
                       <div
                         style={{
                           width: 120,
@@ -296,12 +394,12 @@ function Dashboard() {
         </>
       )}
 
-      {/* Empty state */}
+      {/* Empty state for expenses */}
       {Object.keys(byCompany).length === 0 && (
         <div className="pro-card">
           <div className="pro-card-body empty-state">
             <FiTag className="empty-state-icon" />
-            <h5>No activity yet · {thisYear.label}</h5>
+            <h5>No expenses yet · {thisYear.label}</h5>
             <p>Upload a document or use Manual Input to create a requisition</p>
           </div>
         </div>
