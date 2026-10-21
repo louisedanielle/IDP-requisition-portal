@@ -9,8 +9,6 @@ import {
   updateIncome,
   deleteIncome,
   getCompanies,
-  getCompanyCategories,
-  getPayees,
   API_BASE_URL,
 } from '../services/api';
 
@@ -18,6 +16,8 @@ const num = (v) => {
   const n = typeof v === 'number' ? v : parseFloat(v);
   return Number.isFinite(n) ? n : 0;
 };
+
+const SELLER_NAME = 'LEAPSTACK INTERNATIONAL LIMITED';
 
 const normalizeLine = (li = {}) => ({
   id: li.id,
@@ -39,26 +39,20 @@ export default function InvoiceDetail() {
   const [busy, setBusy] = useState(false);
 
   const [companies, setCompanies] = useState([]);
-  const [payees, setPayees] = useState([]);
-  const [companyCategories, setCompanyCategories] = useState({});
 
   const [editing, setEditing] = useState(false);
   const [editInvNo, setEditInvNo] = useState('');
   const [editCompanyId, setEditCompanyId] = useState('');
-  const [editPaymentType, setEditPaymentType] = useState('');
-  const [editCategoryId, setEditCategoryId] = useState('');
-  const [editPayeeName, setEditPayeeName] = useState('');
   const [editCustomer, setEditCustomer] = useState('');
   const [editAddress, setEditAddress] = useState('');
   const [editPeriod, setEditPeriod] = useState('');
   const [editDate, setEditDate] = useState('');
   const [editRef, setEditRef] = useState('');
-  const [editSubGroup, setEditSubGroup] = useState('');
   const [editItems, setEditItems] = useState([]);
 
   useEffect(() => {
-    Promise.all([getCompanies(), getPayees()])
-      .then(([comps, pys]) => { setCompanies(comps); setPayees(pys); })
+    getCompanies()
+      .then(setCompanies)
       .catch((err) => console.error(err));
   }, []);
 
@@ -77,45 +71,22 @@ export default function InvoiceDetail() {
 
   useEffect(() => { load(); }, [id]);
 
-  useEffect(() => {
-    if (!editing || !editCompanyId) return;
-    getCompanyCategories(editCompanyId)
-      .then((map) => {
-        setCompanyCategories(map);
-        const allCats = Object.values(map).flat();
-        if (!allCats.find((c) => c.id === editCategoryId)) {
-          setEditCategoryId('');
-        }
-      })
-      .catch((err) => console.error(err));
-  }, [editing, editCompanyId]);
-
   const getLines = (d) => {
     if (!d) return [];
     const raw = d.lines ?? d.line_items ?? [];
     return Array.isArray(raw) ? raw.map(normalizeLine) : [];
   };
 
-  const startEditing = async () => {
+  const startEditing = () => {
     if (!data) return;
     setEditInvNo(data.invoice_number || '');
     setEditCompanyId(data.company_id || '');
-    setEditPaymentType(data.payment_type_name || '');
-    setEditCategoryId(data.payment_category_id || '');
-    setEditPayeeName(data.payee_name || '');
     setEditCustomer(data.customer_name || '');
     setEditAddress(data.customer_address || '');
     setEditPeriod(data.period || '');
     setEditDate(data.date_issued ? String(data.date_issued).split('T')[0] : '');
     setEditRef(data.statement_ref || '');
-    setEditSubGroup(data.sub_group || '');
     setEditItems(getLines(data));
-
-    if (data.company_id) {
-      try {
-        setCompanyCategories(await getCompanyCategories(data.company_id));
-      } catch (err) { console.error(err); }
-    }
     setEditing(true);
   };
 
@@ -151,14 +122,11 @@ export default function InvoiceDetail() {
       await updateIncome(id, {
         invoice_number: editInvNo,
         company_id: editCompanyId,
-        payment_category_id: editCategoryId,
-        payee_name: editPayeeName,
         customer_name: customerName,
         customer_address: editAddress,
         period: editPeriod,
         date_issued: editDate,
         statement_ref: editRef,
-        sub_group: editSubGroup,
         line_items: editItems,
         lines: editItems,
       });
@@ -183,8 +151,6 @@ export default function InvoiceDetail() {
       setBusy(false);
     }
   };
-
-  const flatCategories = Object.values(companyCategories).flat();
 
   if (loading) {
     return (
@@ -224,10 +190,7 @@ export default function InvoiceDetail() {
             </button>
             <h1 className="page-title mb-1">{data.invoice_number}</h1>
             <p className="page-subtitle">
-              {data.company_name}
-              {data.payment_type_name && ` · ${data.payment_type_name}`}
-              {data.category_name && ` · ${data.category_name}`}
-              {data.payee_name && ` · ${data.payee_name}`}
+              {SELLER_NAME} → {data.customer_name}
               {data.period && ` · ${data.period}`}
             </p>
           </div>
@@ -264,10 +227,7 @@ export default function InvoiceDetail() {
               </div>
               <div className="pro-card-body">
                 <div className="row g-3">
-                  <div className="col-md-4"><b>Issued By</b><div>LEAPSTACK INTERNATIONAL LIMITED</div></div>
-                  <div className="col-md-4"><b>Payment Type</b><div>{data.payment_type_name || '—'}</div></div>
-                  <div className="col-md-4"><b>Category</b><div>{data.category_name || '—'}</div></div>
-                  <div className="col-md-4"><b>Payee</b><div>{data.payee_name || '—'}</div></div>
+                  <div className="col-md-4"><b>Seller</b><div>{SELLER_NAME}</div></div>
                   <div className="col-md-4"><b>Customer</b><div>{data.customer_name || '—'}</div></div>
                   <div className="col-md-4"><b>Address</b><div>{data.customer_address || '—'}</div></div>
                   <div className="col-md-3"><b>Period</b><div>{data.period || '—'}</div></div>
@@ -276,9 +236,6 @@ export default function InvoiceDetail() {
                     <div>{data.date_issued ? new Date(data.date_issued).toLocaleDateString() : '—'}</div>
                   </div>
                   <div className="col-md-3"><b>Statement Ref</b><div>{data.statement_ref || '—'}</div></div>
-                  {data.sub_group && (
-                    <div className="col-md-3"><b>Sub-group</b><div>{data.sub_group}</div></div>
-                  )}
                 </div>
               </div>
             </div>
@@ -396,55 +353,10 @@ export default function InvoiceDetail() {
               <input className="form-control" value={editInvNo} onChange={(e) => setEditInvNo(e.target.value)} />
             </div>
             <div className="col-md-3">
-              <label className="form-label-sm">Company *</label>
+              <label className="form-label-sm">Company (Seller)</label>
               <select className="form-select" value={editCompanyId} onChange={(e) => setEditCompanyId(e.target.value)}>
-                <option value="">— Select —</option>
                 {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
-            </div>
-            <div className="col-md-3">
-              <label className="form-label-sm">Payment Type</label>
-              <select
-                className="form-select"
-                value={editPaymentType}
-                onChange={(e) => { setEditPaymentType(e.target.value); setEditCategoryId(''); }}
-              >
-                <option value="">— Select —</option>
-                {Object.keys(companyCategories).map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-            </div>
-            <div className="col-md-3">
-              <label className="form-label-sm">Nature / Category</label>
-              <select
-                className="form-select"
-                value={editCategoryId}
-                onChange={(e) => setEditCategoryId(e.target.value)}
-                disabled={!editPaymentType}
-              >
-                <option value="">— Select —</option>
-                {editPaymentType
-                  ? (companyCategories[editPaymentType] || []).map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))
-                  : flatCategories.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-              </select>
-            </div>
-
-            <div className="col-md-3">
-              <label className="form-label-sm">Payee *</label>
-              <input
-                className="form-control"
-                list="invoice-payee-list"
-                value={editPayeeName}
-                onChange={(e) => setEditPayeeName(e.target.value)}
-              />
-              <datalist id="invoice-payee-list">
-                {payees.map((p) => <option key={p.id} value={p.name} />)}
-              </datalist>
             </div>
             <div className="col-md-3">
               <label className="form-label-sm">Customer Name *</label>
@@ -452,12 +364,10 @@ export default function InvoiceDetail() {
                 className="form-control"
                 value={editCustomer}
                 onChange={(e) => setEditCustomer(e.target.value)}
-                style={{
-                  borderColor: !(editCustomer || '').trim() ? 'var(--danger)' : undefined,
-                }}
+                style={{ borderColor: !(editCustomer || '').trim() ? 'var(--danger)' : undefined }}
               />
             </div>
-            <div className="col-md-6">
+            <div className="col-md-3">
               <label className="form-label-sm">Customer Address</label>
               <input className="form-control" value={editAddress} onChange={(e) => setEditAddress(e.target.value)} />
             </div>
@@ -478,10 +388,6 @@ export default function InvoiceDetail() {
             <div className="col-md-3">
               <label className="form-label-sm">Statement Ref</label>
               <input className="form-control" value={editRef} onChange={(e) => setEditRef(e.target.value)} />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label-sm">Sub-group</label>
-              <input className="form-control" value={editSubGroup} onChange={(e) => setEditSubGroup(e.target.value)} />
             </div>
           </div>
         </div>

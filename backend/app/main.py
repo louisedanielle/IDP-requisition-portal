@@ -1485,20 +1485,21 @@ async def upload_income_report(file: UploadFile = File(...), db: Session = Depen
 
 
 @app.post("/api/incomes")
+@app.post("/api/incomes")
 async def create_income(data: dict, db: Session = Depends(get_db)):
     company_id = _to_uuid(data.get("company_id"))
     if not company_id:
         raise HTTPException(400, "company_id is required")
 
-    payment_category_id = _to_uuid(data.get("payment_category_id"))
-    payee_name = (data.get("payee_name") or "").strip() or None
-
-    rel = _resolve_income_relations(db, company_id, payment_category_id, payee_name)
-    company = rel["company"]
+    company = db.query(Company).filter(Company.id == company_id).first()
     if not company:
         raise HTTPException(400, "Valid company_id is required")
-    category = rel["category"]
-    payee = rel["payee"]
+
+    customer_name = (data.get("customer_name") or "").strip()
+    if not customer_name:
+        raise HTTPException(400, "customer_name is required")
+
+    customer_address = (data.get("customer_address") or "").strip() or None
 
     requested = (data.get("invoice_number") or "").strip()
     if requested:
@@ -1526,8 +1527,8 @@ async def create_income(data: dict, db: Session = Depends(get_db)):
         invoice_number=invoice_number,
         company_id=company.id,
         company_name=company.name,
-        customer_name=data.get("customer_name") or "Unknown Customer",
-        customer_address=data.get("customer_address"),
+        customer_name=customer_name,
+        customer_address=customer_address,
         period=period,
         date_issued=_parse_date(data.get("date_issued")) or datetime.utcnow(),
         total_rm=float(data.get("total_rm") or 0),
@@ -1537,11 +1538,6 @@ async def create_income(data: dict, db: Session = Depends(get_db)):
         status="draft",
         statement_ref=data.get("statement_ref"),
         notes=data.get("notes"),
-        payment_category_id=category.id if category else None,
-        category_name=category.name if category else None,
-        payment_type_name=category.payment_type.name if category else None,
-        payee_id=payee.id if payee else None,
-        payee_name=payee.name if payee else None,
         sub_group=sub_group,
     )
     db.add(income)
@@ -1624,23 +1620,20 @@ async def list_income_folders(company_id: UUID | None = None, db: Session = Depe
     for r in rows:
         company = r.company_name or "Unknown Company"
         year, month = _split_period(r.period)
-        category = r.category_name or "Uncategorized"
-        payee = r.payee_name or r.customer_name or "Unknown Payee"
+        customer = r.customer_name or "Unknown Customer"
 
         tree.setdefault(company, {})
         tree[company].setdefault(year, {})
         tree[company][year].setdefault(month, {})
-        tree[company][year][month].setdefault(category, {})
-        tree[company][year][month][category].setdefault(payee, []).append({
+        tree[company][year][month].setdefault(customer, []).append({
             "id": str(r.id),
             "invoice_number": r.invoice_number,
             "customer_name": r.customer_name,
-            "payee_name": r.payee_name,
+            "customer_address": r.customer_address,
             "period": r.period,
             "total_rm": r.total_rm,
             "total_hkd": r.total_hkd,
             "status": r.status,
-            "sub_group": r.sub_group,
             "date_issued": r.date_issued.isoformat() if r.date_issued else None,
         })
 
@@ -1651,15 +1644,13 @@ async def list_income_folders(company_id: UUID | None = None, db: Session = Depe
             sorted_tree[company][year] = {}
             for month in sorted(tree[company][year].keys(), reverse=True):
                 sorted_tree[company][year][month] = {}
-                for category in sorted(tree[company][year][month].keys()):
-                    sorted_tree[company][year][month][category] = {}
-                    for payee in sorted(tree[company][year][month][category].keys()):
-                        invs = sorted(
-                            tree[company][year][month][category][payee],
-                            key=lambda x: x.get("date_issued") or "",
-                            reverse=True,
-                        )
-                        sorted_tree[company][year][month][category][payee] = invs
+                for customer in sorted(tree[company][year][month].keys()):
+                    invs = sorted(
+                        tree[company][year][month][customer],
+                        key=lambda x: x.get("date_issued") or "",
+                        reverse=True,
+                    )
+                    sorted_tree[company][year][month][customer] = invs
     return sorted_tree
 
 
@@ -1726,10 +1717,15 @@ async def update_income(income_id: UUID, data: dict, db: Session = Depends(get_d
 
     if "invoice_number" in data:
         r.invoice_number = data["invoice_number"]
+
     if "customer_name" in data:
-        r.customer_name = data["customer_name"]
+        new_cn = (data.get("customer_name") or "").strip()
+        if not new_cn:
+            raise HTTPException(400, "customer_name cannot be empty")
+        r.customer_name = new_cn
     if "customer_address" in data:
-        r.customer_address = data["customer_address"]
+        r.customer_address = (data.get("customer_address") or "").strip() or None
+
     if "period" in data:
         r.period = _normalize_period(data["period"])
     if "date_issued" in data:
@@ -1744,43 +1740,6 @@ async def update_income(income_id: UUID, data: dict, db: Session = Depends(get_d
         r.notes = data["notes"]
     if "sub_group" in data:
         r.sub_group = (data.get("sub_group") or "").strip() or None
-
-    new_company_id = _to_uuid(data.get("company_id"))
-    new_category_id = _to_uuid(data.get("payment_category_id"))
-    new_payee_name = data.get("payee_name")
-
-    if new_company_id:
-        company = db.query(Company).filter(Company.id == new_company_id).first()
-        if not company:
-            raise HTTPException(404, "Company not found")
-        r.company_id = company.id
-        r.company_name = company.name
-
-    if new_category_id:
-        category = (
-            db.query(PaymentCategory)
-            .filter(PaymentCategory.id == new_category_id)
-            .first()
-        )
-        if not category:
-            raise HTTPException(404, "Payment category not found")
-        r.payment_category_id = category.id
-        r.category_name = category.name
-        r.payment_type_name = category.payment_type.name
-
-    if new_payee_name is not None:
-        name = (new_payee_name or "").strip()
-        if name:
-            payee = db.query(Payee).filter(Payee.name == name).first()
-            if not payee:
-                payee = Payee(name=name, payee_type="other")
-                db.add(payee)
-                db.flush()
-            r.payee_id = payee.id
-            r.payee_name = name
-        else:
-            r.payee_id = None
-            r.payee_name = None
 
     lines_payload = data.get("line_items", data.get("lines"))
     if lines_payload is not None:

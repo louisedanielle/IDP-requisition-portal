@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
   FiChevronRight, FiChevronDown, FiEye, FiTrash2,
-  FiDownload, FiFolder, FiCalendar, FiTag, FiUser,
+  FiDownload, FiFolder, FiCalendar, FiUser,
 } from 'react-icons/fi';
 import { getIncomeFolders, deleteIncome, API_BASE_URL } from '../services/api';
 
@@ -101,7 +101,7 @@ export default function Invoices() {
 
                       {yOpen && (
                         <div style={{ marginLeft: 16, marginTop: 8 }}>
-                          {Object.entries(months).map(([month, categories]) => {
+                          {Object.entries(months).map(([month, customers]) => {
                             const mKey = `${yKey}::month::${month}`;
                             const mOpen = isOpen(mKey, true);
                             return (
@@ -116,88 +116,60 @@ export default function Invoices() {
 
                                 {mOpen && (
                                   <div style={{ marginLeft: 16, marginTop: 6 }}>
-                                    {Object.entries(categories).map(([category, payees]) => {
-                                      const catKey = `${mKey}::cat::${category}`;
-                                      const catOpen = isOpen(catKey, true);
+                                    {Object.entries(customers).map(([customer, invs]) => {
+                                      const cuKey = `${mKey}::customer::${customer}`;
+                                      const cuOpen = isOpen(cuKey, true);
                                       return (
-                                        <div key={catKey} style={{ marginBottom: 12 }}>
+                                        <div key={cuKey} style={{ marginBottom: 10 }}>
                                           <div
-                                            onClick={() => toggle(catKey)}
+                                            onClick={() => toggle(cuKey)}
                                             style={{
                                               cursor: 'pointer', display: 'flex', alignItems: 'center',
-                                              gap: 6, fontSize: '0.8125rem', color: 'var(--primary)',
-                                              textTransform: 'uppercase', fontWeight: 600, padding: '4px 0',
+                                              gap: 6, fontSize: '0.8125rem', fontWeight: 500,
+                                              padding: '4px 0', color: 'var(--neutral-700)',
                                             }}
                                           >
-                                            {catOpen ? <FiChevronDown size={14}/> : <FiChevronRight size={14}/>}
-                                            <FiTag size={12} />
-                                            {category}
-                                            <span style={{ marginLeft: 6, textTransform: 'none', fontWeight: 400, color: 'var(--neutral-500)' }}>
-                                              ({Object.keys(payees).length} payee{Object.keys(payees).length !== 1 ? 's' : ''})
+                                            {cuOpen ? <FiChevronDown size={14}/> : <FiChevronRight size={14}/>}
+                                            <FiUser size={12} />
+                                            {customer}
+                                            <span style={{ marginLeft: 6, fontWeight: 400, color: 'var(--neutral-500)' }}>
+                                              ({invs.length})
                                             </span>
                                           </div>
 
-                                          {catOpen && (
+                                          {cuOpen && (
                                             <div style={{ marginLeft: 20, marginTop: 4 }}>
-                                              {Object.entries(payees).map(([payee, invs]) => {
-                                                const pKey = `${catKey}::payee::${payee}`;
-                                                const pOpen = isOpen(pKey, true);
-                                                return (
-                                                  <div key={pKey} style={{ marginBottom: 10 }}>
-                                                    <div
-                                                      onClick={() => toggle(pKey)}
-                                                      style={{
-                                                        cursor: 'pointer', display: 'flex', alignItems: 'center',
-                                                        gap: 6, fontSize: '0.8125rem', fontWeight: 500,
-                                                        padding: '4px 0', color: 'var(--neutral-700)',
-                                                      }}
-                                                    >
-                                                      {pOpen ? <FiChevronDown size={14}/> : <FiChevronRight size={14}/>}
-                                                      <FiUser size={12} />
-                                                      {payee}
-                                                      <span style={{ marginLeft: 6, fontWeight: 400, color: 'var(--neutral-500)' }}>
-                                                        ({invs.length})
-                                                      </span>
-                                                    </div>
-
-                                                    {pOpen && (
-                                                      <div style={{ marginLeft: 20, marginTop: 4 }}>
-                                                        {invs.map((inv) => (
-                                                          <div
-                                                            key={inv.id}
-                                                            style={{
-                                                              display: 'flex', alignItems: 'center', gap: 12,
-                                                              padding: '8px 12px', border: '1px solid var(--neutral-200)',
-                                                              borderRadius: 6, marginBottom: 6, background: 'white',
-                                                            }}
-                                                          >
-                                                            <span style={{ fontWeight: 600, color: 'var(--primary)' }}>
-                                                              {inv.invoice_number}
-                                                            </span>
-                                                            <span style={{ color: 'var(--neutral-500)', fontSize: '0.8125rem' }}>
-                                                              {inv.period || '—'}
-                                                            </span>
-                                                            <span style={{ flex: 1 }} />
-                                                            <span style={{ fontWeight: 600 }}>
-                                                              RM{(inv.total_rm || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                                                            </span>
-                                                            <span className={`status-badge status-${inv.status}`}>{inv.status}</span>
-                                                            <button className="btn btn-sm btn-outline-primary" title="View" onClick={() => navigate(`/income/${inv.id}`)}>
-                                                              <FiEye size={14} />
-                                                            </button>
-                                                            <button className="btn btn-sm btn-outline-primary" title="Download" onClick={() => handleDownload(inv.id)}>
-                                                              <FiDownload size={14} />
-                                                            </button>
-                                                            <button className="btn btn-sm btn-outline-danger" title="Delete" onClick={() => handleDelete(inv.id, inv.invoice_number)}>
-                                                              <FiTrash2 size={14} />
-                                                            </button>
-                                                          </div>
-                                                        ))}
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                );
-                                              })}
+                                              {invs.map((inv) => (
+                                                <div
+                                                  key={inv.id}
+                                                  style={{
+                                                    display: 'flex', alignItems: 'center', gap: 12,
+                                                    padding: '8px 12px', border: '1px solid var(--neutral-200)',
+                                                    borderRadius: 6, marginBottom: 6, background: 'white',
+                                                  }}
+                                                >
+                                                  <span style={{ fontWeight: 600, color: 'var(--primary)' }}>
+                                                    {inv.invoice_number}
+                                                  </span>
+                                                  <span style={{ color: 'var(--neutral-500)', fontSize: '0.8125rem' }}>
+                                                    {inv.period || '—'}
+                                                  </span>
+                                                  <span style={{ flex: 1 }} />
+                                                  <span style={{ fontWeight: 600 }}>
+                                                    RM{(inv.total_rm || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                                  </span>
+                                                  <span className={`status-badge status-${inv.status}`}>{inv.status}</span>
+                                                  <button className="btn btn-sm btn-outline-primary" title="View" onClick={() => navigate(`/income/${inv.id}`)}>
+                                                    <FiEye size={14} />
+                                                  </button>
+                                                  <button className="btn btn-sm btn-outline-primary" title="Download" onClick={() => handleDownload(inv.id)}>
+                                                    <FiDownload size={14} />
+                                                  </button>
+                                                  <button className="btn btn-sm btn-outline-danger" title="Delete" onClick={() => handleDelete(inv.id, inv.invoice_number)}>
+                                                    <FiTrash2 size={14} />
+                                                  </button>
+                                                </div>
+                                              ))}
                                             </div>
                                           )}
                                         </div>

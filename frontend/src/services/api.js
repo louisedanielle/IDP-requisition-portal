@@ -46,6 +46,10 @@ export const createCompany = async (name, shortName) => {
   return data;
 };
 
+export const createCustomer = async (name, address) => {
+  return { name, address };
+};
+
 // ---------- Documents ----------
 export const uploadDocument = async (file) => {
   const formData = new FormData();

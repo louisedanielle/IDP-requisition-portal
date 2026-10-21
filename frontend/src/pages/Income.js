@@ -7,11 +7,6 @@ import {
 } from 'react-icons/fi';
 import {
   getCompanies,
-  getCompanyCategories,
-  getPayees,
-  createPayee,
-  createNature,
-  createCompany,
   listIncomes,
   uploadIncomeReport,
   createIncome,
@@ -24,69 +19,44 @@ const num = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+const SELLER_NAME = 'LEAPSTACK INTERNATIONAL LIMITED';
+
 export default function Income() {
   const [companies, setCompanies] = useState([]);
-  const [payees, setPayees] = useState([]);
-  const [companyCategories, setCompanyCategories] = useState({});
   const [incomes, setIncomes] = useState([]);
 
   const [extraction, setExtraction] = useState(null);
   const [isExtracting, setIsExtracting] = useState(false);
 
   const [companyId, setCompanyId] = useState('');
-  const [paymentType, setPaymentType] = useState('');
-  const [natureId, setNatureId] = useState('');
-  const [natureName, setNatureName] = useState('');
-  const [payeeName, setPayeeName] = useState('');
   const [period, setPeriod] = useState('');
-  const [subGroup, setSubGroup] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [newPayeeName, setNewPayeeName] = useState('');
-  const [newNatureName, setNewNatureName] = useState('');
-  const [newCompanyName, setNewCompanyName] = useState('');
+  const [newCustomerName, setNewCustomerName] = useState('');
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const lastItemRef = useRef(null);
 
-  const natureKey = (natureName || '').trim().toLowerCase();
-  const isMpf = natureKey.startsWith('mpf');
-
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     try {
-      const [comps, pys, incs] = await Promise.all([
-        getCompanies(),
-        getPayees(),
-        listIncomes(),
-      ]);
+      const [comps, incs] = await Promise.all([getCompanies(), listIncomes()]);
       setCompanies(comps);
-      setPayees(pys);
       setIncomes(incs);
+      // Auto-select LEAPSTACK if it exists, otherwise first company
+      if (!companyId && comps.length > 0) {
+        const leap = comps.find((c) =>
+          (c.name || '').toUpperCase().includes('LEAPSTACK')
+        );
+        setCompanyId(leap ? leap.id : comps[0].id);
+      }
     } catch (err) {
       setError(err.response?.data?.detail || err.message);
     }
   };
 
-  useEffect(() => {
-    if (!companyId) {
-      setCompanyCategories({});
-      setPaymentType('');
-      setNatureId('');
-      setNatureName('');
-      return;
-    }
-    getCompanyCategories(companyId)
-      .then((map) => {
-        setCompanyCategories(map);
-        setPaymentType('');
-        setNatureId('');
-        setNatureName('');
-      })
-      .catch((err) => console.error(err));
-  }, [companyId]);
-
+  // Auto-generate invoice number
   useEffect(() => {
     if (!companyId) {
       setInvoiceNumber('');
@@ -131,46 +101,11 @@ export default function Income() {
     maxFiles: 1,
   });
 
-  const handleAddPayee = async () => {
-    const name = newPayeeName.trim();
+  const handleAddCustomer = () => {
+    const name = newCustomerName.trim();
     if (!name) return;
-    try {
-      const created = await createPayee(name);
-      setPayees(await getPayees());
-      setPayeeName(created.name);
-      setNewPayeeName('');
-    } catch (err) {
-      setError(err.response?.data?.detail || err.message);
-    }
-  };
-
-  const handleAddNature = async () => {
-    const name = newNatureName.trim();
-    if (!name) return;
-    if (!companyId) return setError('Please select a company first.');
-    if (!paymentType) return setError('Please select a payment type first.');
-    try {
-      const created = await createNature(companyId, name, paymentType);
-      setCompanyCategories(await getCompanyCategories(companyId));
-      setNatureId(created.id);
-      setNatureName(created.name);
-      setNewNatureName('');
-    } catch (err) {
-      setError(err.response?.data?.detail || err.message);
-    }
-  };
-
-  const handleAddCompany = async () => {
-    const name = newCompanyName.trim();
-    if (!name) return;
-    try {
-      const created = await createCompany(name, name.substring(0, 4));
-      setCompanies(await getCompanies());
-      setCompanyId(created.id);
-      setNewCompanyName('');
-    } catch (err) {
-      setError(err.response?.data?.detail || err.message);
-    }
+    setExtraction((prev) => ({ ...(prev || {}), customer_name: name }));
+    setNewCustomerName('');
   };
 
   const updateLine = (idx, field, value) => {
@@ -204,21 +139,13 @@ export default function Income() {
 
   const resetForm = () => {
     setExtraction(null);
-    setCompanyId('');
-    setPaymentType('');
-    setNatureId('');
-    setNatureName('');
-    setPayeeName('');
     setPeriod('');
-    setSubGroup('');
     setInvoiceNumber('');
+    setNewCustomerName('');
   };
 
   const handleSave = async () => {
-    if (!companyId) return setError('Please select a company.');
-    if (!paymentType) return setError('Please select a payment type.');
-    if (!natureId) return setError('Please select a nature.');
-    if (!payeeName) return setError('Please select a payee.');
+    if (!companyId) return setError('Company is required.');
     if (!invoiceNumber) return setError('Invoice number is required.');
     if (!extraction) return setError('No extraction data to save.');
 
@@ -232,11 +159,8 @@ export default function Income() {
         ...extraction,
         customer_name: customerName,
         company_id: companyId,
-        payment_category_id: natureId,
-        payee_name: payeeName,
         invoice_number: invoiceNumber,
         period: period || null,
-        sub_group: subGroup.trim() || null,
         lines: extraction.lines || [],
       });
       resetForm();
@@ -258,9 +182,8 @@ export default function Income() {
     }
   };
 
-  const paymentTypes = Object.keys(companyCategories);
-  const categoriesForType = paymentType ? companyCategories[paymentType] || [] : [];
   const customerNameMissing = extraction && !(extraction.customer_name || '').trim();
+  const sellerCompany = companies.find((c) => c.id === companyId);
 
   return (
     <div>
@@ -268,7 +191,7 @@ export default function Income() {
         <div>
           <h1 className="page-title">Income / Invoices</h1>
           <p className="page-subtitle">
-            Upload a Revenue Sharing Report to extract data and generate an invoice.
+            Upload a Revenue Sharing Report to extract the customer and generate an invoice.
           </p>
         </div>
         <Link to="/invoices" className="btn btn-outline-primary">
@@ -292,7 +215,7 @@ export default function Income() {
               <FiUploadCloud className="upload-icon" />
               <h5>Drag a Revenue Sharing Report here or click to browse</h5>
               <p style={{ color: 'var(--neutral-500)' }}>
-                PDF, PNG, or JPG — AI will extract the invoice details automatically
+                PDF, PNG, or JPG — AI will extract the customer and invoice details automatically
               </p>
             </div>
           </div>
@@ -309,107 +232,56 @@ export default function Income() {
 
       {extraction && (
         <>
+          {/* Seller (fixed) */}
           <div className="pro-card mb-3">
+            <div className="pro-card-header"><span>Seller</span></div>
             <div className="pro-card-body">
               <div className="row g-3">
-                <div className="col-md-3">
-                  <label className="form-label-sm">Company *</label>
-                  <select className="form-select" value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
-                    <option value="">— Select —</option>
-                    {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-                <div className="col-md-2">
-                  <label className="form-label-sm">Payment Type *</label>
+                <div className="col-md-4">
+                  <label className="form-label-sm">Company (Seller)</label>
                   <select
-                    className="form-select" value={paymentType} disabled={!companyId}
-                    onChange={(e) => { setPaymentType(e.target.value); setNatureId(''); setNatureName(''); }}
+                    className="form-select"
+                    value={companyId}
+                    onChange={(e) => setCompanyId(e.target.value)}
                   >
-                    <option value="">— Select —</option>
-                    {paymentTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
                   </select>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--neutral-500)', marginTop: '0.25rem' }}>
+                    Printed header is always <strong>{SELLER_NAME}</strong>.
+                    {sellerCompany && sellerCompany.name !== SELLER_NAME && (
+                      <> (Currently selected DB row: {sellerCompany.name})</>
+                    )}
+                  </div>
                 </div>
-                <div className="col-md-2">
-                  <label className="form-label-sm">Nature *</label>
-                  <select
-                    className="form-select" value={natureId} disabled={!paymentType}
-                    onChange={(e) => {
-                      setNatureId(e.target.value);
-                      const found = categoriesForType.find((c) => c.id === e.target.value);
-                      setNatureName(found ? found.name : '');
-                    }}
-                  >
-                    <option value="">— Select —</option>
-                    {categoriesForType.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                <div className="col-md-4">
+                  <label className="form-label-sm">Invoice Number *</label>
+                  <input
+                    className="form-control"
+                    value={invoiceNumber}
+                    onChange={(e) => setInvoiceNumber(e.target.value)}
+                  />
                 </div>
-                <div className="col-md-2">
-                  <label className="form-label-sm">Payee *</label>
-                  <select className="form-select" value={payeeName} onChange={(e) => setPayeeName(e.target.value)}>
-                    <option value="">— Select —</option>
-                    {payees.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
-                  </select>
-                </div>
-                <div className="col-md-3">
+                <div className="col-md-4">
                   <label className="form-label-sm">Period (YYYY-MM)</label>
                   <input
-                    type="month" className="form-control"
+                    type="month"
+                    className="form-control"
                     value={period && /^\d{4}-\d{2}$/.test(period) ? period : ''}
                     onChange={(e) => setPeriod(e.target.value)}
                   />
                 </div>
               </div>
+            </div>
+          </div>
 
-              {isMpf && (
-                <div className="row g-3 mt-1">
-                  <div className="col-md-4">
-                    <label className="form-label-sm">MPF Package / Plan</label>
-                    <input
-                      className="form-control"
-                      placeholder="e.g. Stanley + Cole, Matao + Jason"
-                      value={subGroup}
-                      onChange={(e) => setSubGroup(e.target.value)}
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="row g-3 mt-2">
-                <div className="col-md-4">
-                  <label className="form-label-sm">Invoice Number *</label>
-                  <input
-                    className="form-control" value={invoiceNumber}
-                    onChange={(e) => setInvoiceNumber(e.target.value)}
-                  />
-                </div>
-                <div className="col-md-4 d-flex align-items-end gap-2">
-                  <div style={{ flex: 1 }}>
-                    <label className="form-label-sm">Add new payee</label>
-                    <input className="form-control" value={newPayeeName} onChange={(e) => setNewPayeeName(e.target.value)} />
-                  </div>
-                  <button className="btn btn-outline-primary" onClick={handleAddPayee}>+ Add</button>
-                </div>
-                <div className="col-md-4 d-flex align-items-end gap-2">
-                  <div style={{ flex: 1 }}>
-                    <label className="form-label-sm">Add new nature</label>
-                    <input
-                      className="form-control" value={newNatureName}
-                      onChange={(e) => setNewNatureName(e.target.value)}
-                      disabled={!companyId || !paymentType}
-                    />
-                  </div>
-                  <button className="btn btn-outline-primary" onClick={handleAddNature} disabled={!companyId || !paymentType}>
-                    + Add
-                  </button>
-                </div>
-                <div className="col-md-4 d-flex align-items-end gap-2">
-                  <div style={{ flex: 1 }}>
-                    <label className="form-label-sm">Add new company</label>
-                    <input className="form-control" value={newCompanyName} onChange={(e) => setNewCompanyName(e.target.value)} />
-                  </div>
-                  <button className="btn btn-outline-primary" onClick={handleAddCompany}>+ Add</button>
-                </div>
-                <div className="col-md-4">
+          {/* Customer */}
+          <div className="pro-card mb-3">
+            <div className="pro-card-header"><span>Customer (Billed To)</span></div>
+            <div className="pro-card-body">
+              <div className="row g-3">
+                <div className="col-md-6">
                   <label className="form-label-sm">Customer Name *</label>
                   <input
                     className="form-control"
@@ -418,7 +290,7 @@ export default function Income() {
                     style={{
                       borderColor: customerNameMissing ? 'var(--danger)' : undefined,
                     }}
-                    placeholder="e.g. MEDICARE SOLUTIONS SDN. BHD."
+                    placeholder="e.g. MEDICARE SOLUTIONS SDN. BHD. (Company No. 1554454-P)"
                   />
                   {customerNameMissing && (
                     <div style={{ fontSize: '0.7rem', color: 'var(--danger)', marginTop: '0.25rem' }}>
@@ -426,7 +298,7 @@ export default function Income() {
                     </div>
                   )}
                 </div>
-                <div className="col-md-4">
+                <div className="col-md-6">
                   <label className="form-label-sm">Customer Address</label>
                   <input
                     className="form-control"
@@ -435,7 +307,21 @@ export default function Income() {
                     placeholder="Full address printed on the invoice"
                   />
                 </div>
-                <div className="col-md-4">
+                <div className="col-md-6 d-flex align-items-end gap-2">
+                  <div style={{ flex: 1 }}>
+                    <label className="form-label-sm">Add new customer</label>
+                    <input
+                      className="form-control"
+                      value={newCustomerName}
+                      onChange={(e) => setNewCustomerName(e.target.value)}
+                      placeholder="e.g. MEDICARE SOLUTIONS SDN. BHD. (Company No. 1554454-P)"
+                    />
+                  </div>
+                  <button className="btn btn-outline-primary" onClick={handleAddCustomer}>
+                    + Add
+                  </button>
+                </div>
+                <div className="col-md-6">
                   <label className="form-label-sm">Statement Ref</label>
                   <input
                     className="form-control"
@@ -447,6 +333,7 @@ export default function Income() {
             </div>
           </div>
 
+          {/* Line items */}
           <div className="pro-card mb-3">
             <div className="pro-card-header">
               <span>Line Items ({extraction.lines?.length || 0})</span>
@@ -511,13 +398,15 @@ export default function Income() {
             </div>
           </div>
 
+          {/* Totals + Save */}
           <div className="pro-card mb-3">
             <div className="pro-card-body">
               <div className="row g-3">
                 <div className="col-md-4">
                   <label className="form-label-sm">Total RM</label>
                   <input
-                    type="number" className="form-control"
+                    type="number"
+                    className="form-control"
                     value={extraction.total_rm || 0}
                     onChange={(e) => setExtraction({ ...extraction, total_rm: parseFloat(e.target.value) || 0 })}
                   />
@@ -525,7 +414,8 @@ export default function Income() {
                 <div className="col-md-4">
                   <label className="form-label-sm">Total HKD (optional)</label>
                   <input
-                    type="number" className="form-control"
+                    type="number"
+                    className="form-control"
                     value={extraction.total_hkd || ''}
                     onChange={(e) => setExtraction({
                       ...extraction,
@@ -552,6 +442,7 @@ export default function Income() {
         </>
       )}
 
+      {/* Existing list */}
       <div className="pro-card">
         <div className="pro-card-header">
           <span>Generated Invoices ({incomes.length})</span>
@@ -560,9 +451,7 @@ export default function Income() {
           <thead>
             <tr>
               <th>Invoice No</th>
-              <th>Company</th>
               <th>Customer</th>
-              <th>Payee</th>
               <th>Period</th>
               <th style={{ textAlign: 'right' }}>Total RM</th>
               <th>Status</th>
@@ -573,9 +462,7 @@ export default function Income() {
             {incomes.map((inc) => (
               <tr key={inc.id}>
                 <td style={{ fontWeight: 600, color: 'var(--primary)' }}>{inc.invoice_number}</td>
-                <td>{inc.company_name}</td>
                 <td>{inc.customer_name}</td>
-                <td>{inc.payee_name || '—'}</td>
                 <td>{inc.period || '—'}</td>
                 <td style={{ textAlign: 'right', fontWeight: 600 }}>
                   RM {num(inc.total_rm).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -603,7 +490,7 @@ export default function Income() {
             ))}
             {incomes.length === 0 && (
               <tr>
-                <td colSpan="8" className="text-center py-4" style={{ color: 'var(--neutral-500)' }}>
+                <td colSpan="6" className="text-center py-4" style={{ color: 'var(--neutral-500)' }}>
                   No invoices generated yet.
                 </td>
               </tr>
