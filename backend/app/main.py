@@ -1523,34 +1523,42 @@ async def upload_income_report(
 
 @app.post("/api/incomes")
 async def create_income(data: dict, db: Session = Depends(get_db)):
-    """
-    Save a reviewed income report as an Income record with line items.
-    Body: same shape as /api/incomes/upload returns, plus company_id.
-    """
     company_id = _to_uuid(data.get("company_id"))
     company = db.query(Company).filter(Company.id == company_id).first() if company_id else None
     if not company:
         raise HTTPException(400, "Valid company_id is required")
 
-    # Generate invoice number
-    year = datetime.utcnow().year
-    prefix = f"LSI{year}"
-    last = (
-        db.query(Income)
-        .filter(Income.invoice_number.like(f"{prefix}%"))
-        .order_by(Income.invoice_number.desc())
-        .first()
-    )
-    if last:
-        try:
-            last_num = int(last.invoice_number.replace(prefix, ""))
-            next_num = last_num + 1
-        except ValueError:
-            next_num = 1
+    # 1. Determine the invoice number (use frontend override or auto-generate)
+    requested_invoice_num = (data.get("invoice_number") or "").strip()
+    
+    if requested_invoice_num:
+        invoice_number = requested_invoice_num
     else:
+        # Auto-generate based on company short_name (e.g., LSI, LSHK, LSH)
+        prefix = (company.short_name or "LSI").upper()
+        year = datetime.utcnow().year
+        
+        # Look for the highest number for this prefix
+        last = (
+            db.query(Income)
+            .filter(Income.invoice_number.like(f"{prefix}%"))
+            .order_by(Income.invoice_number.desc())
+            .first()
+        )
+        
         next_num = 1
-    invoice_number = f"{prefix}{next_num:04d}"
+        if last:
+            try:
+                # Extract digits from the end of the string
+                digits = re.search(r'(\d+)$', last.invoice_number)
+                if digits:
+                    next_num = int(digits.group(1)) + 1
+            except ValueError:
+                pass
+                
+        invoice_number = f"{prefix}{next_num:04d}"
 
+    # 2. Save Income record
     income = Income(
         invoice_number=invoice_number,
         company_id=company.id,
@@ -1618,7 +1626,6 @@ async def list_incomes(
         for r in rows
     ]
 
-
 @app.get("/api/incomes/{income_id}")
 async def get_income(income_id: UUID, db: Session = Depends(get_db)):
     r = db.query(Income).filter(Income.id == income_id).first()
@@ -1640,10 +1647,8 @@ async def get_income(income_id: UUID, db: Session = Depends(get_db)):
         "customer_address": r.customer_address,
         "period": r.period,
         "date_issued": r.date_issued.isoformat() if r.date_issued else None,
-        "currency": r.currency,
         "total_rm": r.total_rm,
         "total_hkd": r.total_hkd,
-        "total_usd": r.total_usd,
         "status": r.status,
         "statement_ref": r.statement_ref,
         "notes": r.notes,
@@ -1657,11 +1662,66 @@ async def get_income(income_id: UUID, db: Session = Depends(get_db)):
                 "machine_runs": li.machine_runs,
                 "rate": li.rate,
                 "amount": li.amount,
-                "currency": li.currency,
             }
             for li in lines
         ],
     }
+
+@app.put("/api/incomes/{income_id}")
+async def update_income(income_id: UUID, data: dict, db: Session = Depends(get_db)):
+    r = db.query(Income).filter(Income.id == income_id).first()
+    if not r:
+        raise HTTPException(404, "Income not found")
+
+    if "invoice_number" in data:
+        r.invoice_number = data["invoice_number"]
+    if "customer_name" in data:
+        r.customer_name = data["customer_name"]
+    if "customer_address" in data:
+        r.customer_address = data["customer_address"]
+    if "period" in data:
+        r.period = _normalize_period(data["period"])
+    if "date_issued" in data:
+        r.date_issued = _parse_date(data["date_issued"]) or datetime.utcnow()
+    if "total_rm" in data:
+        r.total_rm = float(data["total_rm"] or 0)
+    if "total_hkd" in data:
+        r.total_hkd = float(data["total_hkd"]) if data["total_hkd"] else None
+    if "statement_ref" in data:
+        r.statement_ref = data["statement_ref"]
+    if "notes" in data:
+        r.notes = data["notes"]
+
+    # Replace line items
+    if "line_items" in data:
+        db.query(IncomeLineItem).filter(IncomeLineItem.income_id == r.id).delete()
+        for idx, li in enumerate(data["line_items"], start=1):
+            line = IncomeLineItem(
+                income_id=r.id,
+                item_number=idx,
+                description=li.get("description") or li.get("branch") or "",
+                invoice_no=li.get("invoice_no"),
+                machine_serial=li.get("machine_serial"),
+                machine_runs=int(li.get("machine_runs") or 0),
+                rate=float(li.get("rate_rm") or li.get("rate") or 0),
+                amount=float(li.get("amount_rm") or li.get("amount") or 0),
+                currency="RM",
+            )
+            db.add(line)
+
+    db.commit()
+    return {"message": "Updated successfully"}
+
+@app.delete("/api/incomes/{income_id}")
+async def delete_income(income_id: UUID, db: Session = Depends(get_db)):
+    r = db.query(Income).filter(Income.id == income_id).first()
+    if not r:
+        raise HTTPException(404, "Income not found")
+
+    db.query(IncomeLineItem).filter(IncomeLineItem.income_id == income_id).delete()
+    db.delete(r)
+    db.commit()
+    return {"message": "Deleted successfully"}
 
 
 @app.get("/api/incomes/{income_id}/export/word")
