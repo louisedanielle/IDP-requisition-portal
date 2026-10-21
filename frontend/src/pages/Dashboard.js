@@ -95,43 +95,8 @@ function Dashboard() {
           </div>
         </div>
 
-        <div className="col-lg-6 col-md-6">
-          <div className="stat-card h-100">
-            <div className="stat-label">Requisitions · {thisYear.label}</div>
-            <div className="stat-value primary">{thisYear.count}</div>
-          </div>
-        </div>
-
-        <div className="col-lg-6 col-md-6">
-          <div className="stat-card h-100">
-            <div className="stat-label">Amount Paid · {thisYear.label}</div>
-            <div className="stat-value success">HK${fmt(thisYear.total)}</div>
-          </div>
-        </div>
       </div>
 
-      {/* ---------- Quick Actions ---------- */}
-      <div className="pro-card mb-4">
-        <div className="pro-card-header">
-          <span>Quick Actions</span>
-        </div>
-        <div className="pro-card-body">
-          <div className="d-flex gap-3 flex-wrap">
-            <Link to="/upload" className="btn btn-primary d-flex align-items-center gap-2">
-              <FiUploadCloud size={16} /> Upload Document
-            </Link>
-            <Link to="/manual" className="btn btn-outline-primary d-flex align-items-center gap-2">
-              <FiEdit3 size={16} /> Manual Input
-            </Link>
-            <Link to="/income" className="btn btn-outline-success d-flex align-items-center gap-2">
-              <FiDollarSign size={16} /> Upload Revenue Report
-            </Link>
-            <Link to="/requisitions" className="btn btn-outline-primary d-flex align-items-center gap-2">
-              <FiFolder size={16} /> Browse Requisitions
-            </Link>
-          </div>
-        </div>
-      </div>
 
       {/* ================================================================ */}
       {/* INCOME SECTION                                                   */}

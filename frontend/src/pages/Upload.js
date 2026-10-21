@@ -128,9 +128,6 @@ function Upload() {
     <div>
       <div className="page-header">
         <h1 className="page-title">Upload Receipts</h1>
-        <p className="page-subtitle">
-          Drag & drop your receipt files below. AI will extract the expense data automatically.
-        </p>
       </div>
 
       {/* Upload Zone */}

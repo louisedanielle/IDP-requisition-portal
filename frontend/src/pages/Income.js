@@ -190,9 +190,6 @@ export default function Income() {
       <div className="page-header mb-4 d-flex justify-content-between align-items-start flex-wrap gap-3">
         <div>
           <h1 className="page-title">Income / Invoices</h1>
-          <p className="page-subtitle">
-            Upload a Revenue Sharing Report to extract the customer and generate an invoice.
-          </p>
         </div>
         <Link to="/invoices" className="btn btn-outline-primary">
           📁 Browse by folder
@@ -442,62 +439,6 @@ export default function Income() {
         </>
       )}
 
-      {/* Existing list */}
-      <div className="pro-card">
-        <div className="pro-card-header">
-          <span>Generated Invoices ({incomes.length})</span>
-        </div>
-        <table className="pro-table">
-          <thead>
-            <tr>
-              <th>Invoice No</th>
-              <th>Customer</th>
-              <th>Period</th>
-              <th style={{ textAlign: 'right' }}>Total RM</th>
-              <th>Status</th>
-              <th style={{ width: '180px' }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {incomes.map((inc) => (
-              <tr key={inc.id}>
-                <td style={{ fontWeight: 600, color: 'var(--primary)' }}>{inc.invoice_number}</td>
-                <td>{inc.customer_name}</td>
-                <td>{inc.period || '—'}</td>
-                <td style={{ textAlign: 'right', fontWeight: 600 }}>
-                  RM {num(inc.total_rm).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </td>
-                <td>
-                  <span className={`status-badge status-${inc.status}`}>{inc.status}</span>
-                </td>
-                <td>
-                  <div className="d-flex gap-2">
-                    <Link to={`/income/${inc.id}`} className="btn btn-sm btn-outline-primary">
-                      <FiEye size={14} /> View
-                    </Link>
-                    <button
-                      className="btn btn-sm btn-outline-primary"
-                      onClick={() => window.open(`${API_BASE_URL}/api/incomes/${inc.id}/export/word`, '_blank')}
-                    >
-                      <FiDownload size={14} />
-                    </button>
-                    <button className="btn btn-sm btn-outline-danger" onClick={() => handleDelete(inc.id, inc.invoice_number)}>
-                      <FiTrash2 size={14} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {incomes.length === 0 && (
-              <tr>
-                <td colSpan="6" className="text-center py-4" style={{ color: 'var(--neutral-500)' }}>
-                  No invoices generated yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }

@@ -275,11 +275,6 @@ function Review() {
             <FiArrowLeft size={14} /> Back
           </button>
           <h1 className="page-title mb-1">Review Extracted Data</h1>
-          <p className="page-subtitle">
-            {isFreeForm
-              ? 'Write each particular on its own line item, then fill in the amount.'
-              : 'Values below were auto-detected from the document. Adjust as needed, then save.'}
-          </p>
         </div>
         <div className="d-flex gap-2">
           <button
@@ -328,20 +323,10 @@ function Review() {
         </div>
       )}
 
-      {autoFilled && !isFreeForm && !documentMismatch && (
-        <div className="pro-card mb-3" style={{ borderLeft: '4px solid var(--primary)', background: 'var(--primary-light)' }}>
-          <div className="pro-card-body d-flex align-items-center gap-2" style={{ color: 'var(--primary)', fontSize: '0.875rem' }}>
-            ✨ Fields pre-filled from the document
-            {aiPayeeName && <> (AI read payee as: <em>{aiPayeeName}</em>)</>}
-            . Change anything below before saving.
-          </div>
-        </div>
-      )}
-
       {isFreeForm && (
         <div className="pro-card mb-3" style={{ borderLeft: '4px solid var(--warning)', background: '#fffbeb' }}>
           <div className="pro-card-body d-flex align-items-center gap-2" style={{ color: '#92400e', fontSize: '0.875rem' }}>
-            ✍️ <strong>Free-form mode.</strong> Add as many line items as you need. The date applies to the whole PR.
+             <strong>Free-form mode.</strong> Add as many line items as you need. The date applies to the whole PR.
           </div>
         </div>
       )}
