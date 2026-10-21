@@ -139,6 +139,12 @@ export default function InvoiceDetail() {
   };
 
   const handleSave = async () => {
+    const customerName = (editCustomer || '').trim();
+    if (!customerName) {
+      setError('Customer name is required.');
+      return;
+    }
+
     setBusy(true);
     setError(null);
     try {
@@ -147,7 +153,7 @@ export default function InvoiceDetail() {
         company_id: editCompanyId,
         payment_category_id: editCategoryId,
         payee_name: editPayeeName,
-        customer_name: editCustomer,
+        customer_name: customerName,
         customer_address: editAddress,
         period: editPeriod,
         date_issued: editDate,
@@ -258,7 +264,7 @@ export default function InvoiceDetail() {
               </div>
               <div className="pro-card-body">
                 <div className="row g-3">
-                  <div className="col-md-4"><b>Issued By</b><div>{data.company_name || '—'}</div></div>
+                  <div className="col-md-4"><b>Issued By</b><div>LEAPSTACK INTERNATIONAL LIMITED</div></div>
                   <div className="col-md-4"><b>Payment Type</b><div>{data.payment_type_name || '—'}</div></div>
                   <div className="col-md-4"><b>Category</b><div>{data.category_name || '—'}</div></div>
                   <div className="col-md-4"><b>Payee</b><div>{data.payee_name || '—'}</div></div>
@@ -441,8 +447,15 @@ export default function InvoiceDetail() {
               </datalist>
             </div>
             <div className="col-md-3">
-              <label className="form-label-sm">Customer Name</label>
-              <input className="form-control" value={editCustomer} onChange={(e) => setEditCustomer(e.target.value)} />
+              <label className="form-label-sm">Customer Name *</label>
+              <input
+                className="form-control"
+                value={editCustomer}
+                onChange={(e) => setEditCustomer(e.target.value)}
+                style={{
+                  borderColor: !(editCustomer || '').trim() ? 'var(--danger)' : undefined,
+                }}
+              />
             </div>
             <div className="col-md-6">
               <label className="form-label-sm">Customer Address</label>
