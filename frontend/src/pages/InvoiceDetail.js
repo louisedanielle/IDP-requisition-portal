@@ -8,18 +8,17 @@ import {
   getIncome,
   updateIncome,
   deleteIncome,
+  getCompanies,
+  getCompanyCategories,
+  getPayees,
   API_BASE_URL,
 } from '../services/api';
 
-// Safely coerce a value to a number, defaulting to 0
 const num = (v) => {
   const n = typeof v === 'number' ? v : parseFloat(v);
   return Number.isFinite(n) ? n : 0;
 };
 
-// Normalize a line item from the backend into the shape this component edits.
-// Handles both the "lines"/"rate_rm" shape (what Income.js writes) and the
-// legacy "line_items"/"rate" shape, so it's robust either way.
 const normalizeLine = (li = {}) => ({
   id: li.id,
   branch: li.branch ?? li.description ?? '',
@@ -39,15 +38,29 @@ export default function InvoiceDetail() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  // Edit state
+  const [companies, setCompanies] = useState([]);
+  const [payees, setPayees] = useState([]);
+  const [companyCategories, setCompanyCategories] = useState({});
+
   const [editing, setEditing] = useState(false);
   const [editInvNo, setEditInvNo] = useState('');
+  const [editCompanyId, setEditCompanyId] = useState('');
+  const [editPaymentType, setEditPaymentType] = useState('');
+  const [editCategoryId, setEditCategoryId] = useState('');
+  const [editPayeeName, setEditPayeeName] = useState('');
   const [editCustomer, setEditCustomer] = useState('');
   const [editAddress, setEditAddress] = useState('');
   const [editPeriod, setEditPeriod] = useState('');
   const [editDate, setEditDate] = useState('');
   const [editRef, setEditRef] = useState('');
+  const [editSubGroup, setEditSubGroup] = useState('');
   const [editItems, setEditItems] = useState([]);
+
+  useEffect(() => {
+    Promise.all([getCompanies(), getPayees()])
+      .then(([comps, pys]) => { setCompanies(comps); setPayees(pys); })
+      .catch((err) => console.error(err));
+  }, []);
 
   const load = async () => {
     setLoading(true);
@@ -64,22 +77,45 @@ export default function InvoiceDetail() {
 
   useEffect(() => { load(); }, [id]);
 
-  // Get the line items regardless of which key the backend used
+  useEffect(() => {
+    if (!editing || !editCompanyId) return;
+    getCompanyCategories(editCompanyId)
+      .then((map) => {
+        setCompanyCategories(map);
+        const allCats = Object.values(map).flat();
+        if (!allCats.find((c) => c.id === editCategoryId)) {
+          setEditCategoryId('');
+        }
+      })
+      .catch((err) => console.error(err));
+  }, [editing, editCompanyId]);
+
   const getLines = (d) => {
     if (!d) return [];
     const raw = d.lines ?? d.line_items ?? [];
     return Array.isArray(raw) ? raw.map(normalizeLine) : [];
   };
 
-  const startEditing = () => {
+  const startEditing = async () => {
     if (!data) return;
     setEditInvNo(data.invoice_number || '');
+    setEditCompanyId(data.company_id || '');
+    setEditPaymentType(data.payment_type_name || '');
+    setEditCategoryId(data.payment_category_id || '');
+    setEditPayeeName(data.payee_name || '');
     setEditCustomer(data.customer_name || '');
     setEditAddress(data.customer_address || '');
     setEditPeriod(data.period || '');
     setEditDate(data.date_issued ? String(data.date_issued).split('T')[0] : '');
     setEditRef(data.statement_ref || '');
+    setEditSubGroup(data.sub_group || '');
     setEditItems(getLines(data));
+
+    if (data.company_id) {
+      try {
+        setCompanyCategories(await getCompanyCategories(data.company_id));
+      } catch (err) { console.error(err); }
+    }
     setEditing(true);
   };
 
@@ -108,15 +144,17 @@ export default function InvoiceDetail() {
     try {
       await updateIncome(id, {
         invoice_number: editInvNo,
+        company_id: editCompanyId,
+        payment_category_id: editCategoryId,
+        payee_name: editPayeeName,
         customer_name: editCustomer,
         customer_address: editAddress,
         period: editPeriod,
         date_issued: editDate,
         statement_ref: editRef,
-        // Send both `lines` and `line_items` so we're compatible with either
-        // backend expectation. Extra key is harmless.
-        lines: editItems,
+        sub_group: editSubGroup,
         line_items: editItems,
+        lines: editItems,
       });
       setEditing(false);
       await load();
@@ -140,7 +178,8 @@ export default function InvoiceDetail() {
     }
   };
 
-  // -------- Loading / error states --------
+  const flatCategories = Object.values(companyCategories).flat();
+
   if (loading) {
     return (
       <div className="empty-state text-center py-5">
@@ -164,8 +203,8 @@ export default function InvoiceDetail() {
   const lines = getLines(data);
   const totalRm = num(data.total_rm);
   const totalHkd = data.total_hkd != null ? num(data.total_hkd) : null;
+  const subtotal = lines.reduce((s, li) => s + li.amount_rm, 0);
 
-  // ---------------- VIEW MODE ----------------
   if (!editing) {
     return (
       <div>
@@ -178,7 +217,13 @@ export default function InvoiceDetail() {
               <FiArrowLeft size={14} /> Back to Invoices
             </button>
             <h1 className="page-title mb-1">{data.invoice_number}</h1>
-            <p className="page-subtitle">{data.company_name} → {data.customer_name || '—'}</p>
+            <p className="page-subtitle">
+              {data.company_name}
+              {data.payment_type_name && ` · ${data.payment_type_name}`}
+              {data.category_name && ` · ${data.category_name}`}
+              {data.payee_name && ` · ${data.payee_name}`}
+              {data.period && ` · ${data.period}`}
+            </p>
           </div>
           <div className="d-flex gap-2 flex-wrap">
             <button className="btn btn-outline-primary d-flex align-items-center gap-2" onClick={startEditing}>
@@ -190,11 +235,7 @@ export default function InvoiceDetail() {
             >
               <FiDownload size={16} /> Download Invoice
             </button>
-            <button
-              className="btn btn-outline-danger d-flex align-items-center gap-2"
-              onClick={handleDelete}
-              disabled={busy}
-            >
+            <button className="btn btn-outline-danger d-flex align-items-center gap-2" onClick={handleDelete} disabled={busy}>
               <FiTrash2 size={16} /> Delete
             </button>
           </div>
@@ -208,26 +249,30 @@ export default function InvoiceDetail() {
           </div>
         )}
 
-        {/* Info Cards */}
         <div className="row g-3 mb-4">
           <div className="col-md-8">
             <div className="pro-card" style={{ marginBottom: 0 }}>
-              <div className="pro-card-header"><span>Invoice Info</span></div>
+              <div className="pro-card-header">
+                <span>Invoice Info</span>
+                <span className={`status-badge status-${data.status || 'draft'}`}>{data.status || 'draft'}</span>
+              </div>
               <div className="pro-card-body">
                 <div className="row g-3">
-                  <div className="col-md-6"><b>Issued By</b><div>{data.company_name || '—'}</div></div>
-                  <div className="col-md-6"><b>Customer</b><div>{data.customer_name || '—'}</div></div>
-                  <div className="col-md-6"><b>Address</b><div>{data.customer_address || '—'}</div></div>
+                  <div className="col-md-4"><b>Issued By</b><div>{data.company_name || '—'}</div></div>
+                  <div className="col-md-4"><b>Payment Type</b><div>{data.payment_type_name || '—'}</div></div>
+                  <div className="col-md-4"><b>Category</b><div>{data.category_name || '—'}</div></div>
+                  <div className="col-md-4"><b>Payee</b><div>{data.payee_name || '—'}</div></div>
+                  <div className="col-md-4"><b>Customer</b><div>{data.customer_name || '—'}</div></div>
+                  <div className="col-md-4"><b>Address</b><div>{data.customer_address || '—'}</div></div>
                   <div className="col-md-3"><b>Period</b><div>{data.period || '—'}</div></div>
                   <div className="col-md-3">
                     <b>Date Issued</b>
                     <div>{data.date_issued ? new Date(data.date_issued).toLocaleDateString() : '—'}</div>
                   </div>
                   <div className="col-md-3"><b>Statement Ref</b><div>{data.statement_ref || '—'}</div></div>
-                  <div className="col-md-3">
-                    <b>Status</b>
-                    <div><span className={`status-badge status-${data.status || 'draft'}`}>{data.status || 'draft'}</span></div>
-                  </div>
+                  {data.sub_group && (
+                    <div className="col-md-3"><b>Sub-group</b><div>{data.sub_group}</div></div>
+                  )}
                 </div>
               </div>
             </div>
@@ -246,12 +291,14 @@ export default function InvoiceDetail() {
                     ≈ HK${totalHkd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 )}
+                <div style={{ fontSize: '0.75rem', opacity: 0.85, marginTop: '0.5rem' }}>
+                  {lines.length} line items
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Line Items */}
         <div className="pro-card">
           <div className="pro-card-header"><span>Line Items ({lines.length})</span></div>
           <table className="pro-table">
@@ -259,11 +306,11 @@ export default function InvoiceDetail() {
               <tr>
                 <th style={{ width: 50 }}>#</th>
                 <th>Branch / Description</th>
-                <th style={{ width: 150 }}>Invoice No</th>
-                <th style={{ width: 150 }}>Machine Serial</th>
-                <th style={{ width: 120, textAlign: 'center' }}>Runs</th>
-                <th style={{ width: 100, textAlign: 'right' }}>Rate</th>
-                <th style={{ width: 120, textAlign: 'right' }}>Amount</th>
+                <th style={{ width: 140 }}>Invoice No</th>
+                <th style={{ width: 140 }}>Machine Serial</th>
+                <th style={{ width: 100, textAlign: 'center' }}>Runs</th>
+                <th style={{ width: 100, textAlign: 'right' }}>Rate (RM)</th>
+                <th style={{ width: 120, textAlign: 'right' }}>Amount (RM)</th>
               </tr>
             </thead>
             <tbody>
@@ -286,24 +333,35 @@ export default function InvoiceDetail() {
                 </tr>
               )}
             </tbody>
+            <tfoot>
+              <tr style={{ background: 'var(--neutral-50)' }}>
+                <td colSpan="6" style={{ textAlign: 'right', fontWeight: 600, padding: '1rem' }}>Subtotal:</td>
+                <td style={{ textAlign: 'right', fontWeight: 600, padding: '1rem' }}>
+                  RM {subtotal.toFixed(2)}
+                </td>
+              </tr>
+              <tr style={{ background: 'var(--neutral-50)' }}>
+                <td colSpan="6" style={{ textAlign: 'right', fontWeight: 700, padding: '1rem' }}>Total:</td>
+                <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--primary)', padding: '1rem' }}>
+                  RM {totalRm.toFixed(2)}
+                </td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </div>
     );
   }
 
-  // ---------------- EDIT MODE ----------------
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-start mb-4">
+      <div className="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-3">
         <div>
-          <button
-            className="btn btn-sm btn-outline-primary mb-2 d-flex align-items-center gap-1"
-            onClick={() => setEditing(false)}
-          >
+          <button className="btn btn-sm btn-outline-primary mb-2 d-flex align-items-center gap-1" onClick={() => setEditing(false)}>
             <FiArrowLeft size={14} /> Cancel
           </button>
           <h1 className="page-title mb-1">Editing {data.invoice_number}</h1>
+          <p className="page-subtitle">Change any field below. Click Save to apply.</p>
         </div>
         <div className="d-flex gap-2">
           <button className="btn btn-outline-secondary" onClick={() => setEditing(false)} disabled={busy}>
@@ -324,23 +382,81 @@ export default function InvoiceDetail() {
       )}
 
       <div className="pro-card mb-3">
+        <div className="pro-card-header"><span>Invoice Info</span></div>
         <div className="pro-card-body">
           <div className="row g-3">
-            <div className="col-md-4">
-              <label className="form-label-sm">Invoice Number</label>
+            <div className="col-md-3">
+              <label className="form-label-sm">Invoice Number *</label>
               <input className="form-control" value={editInvNo} onChange={(e) => setEditInvNo(e.target.value)} />
             </div>
-            <div className="col-md-4">
+            <div className="col-md-3">
+              <label className="form-label-sm">Company *</label>
+              <select className="form-select" value={editCompanyId} onChange={(e) => setEditCompanyId(e.target.value)}>
+                <option value="">— Select —</option>
+                {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="col-md-3">
+              <label className="form-label-sm">Payment Type</label>
+              <select
+                className="form-select"
+                value={editPaymentType}
+                onChange={(e) => { setEditPaymentType(e.target.value); setEditCategoryId(''); }}
+              >
+                <option value="">— Select —</option>
+                {Object.keys(companyCategories).map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+            <div className="col-md-3">
+              <label className="form-label-sm">Nature / Category</label>
+              <select
+                className="form-select"
+                value={editCategoryId}
+                onChange={(e) => setEditCategoryId(e.target.value)}
+                disabled={!editPaymentType}
+              >
+                <option value="">— Select —</option>
+                {editPaymentType
+                  ? (companyCategories[editPaymentType] || []).map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))
+                  : flatCategories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+              </select>
+            </div>
+
+            <div className="col-md-3">
+              <label className="form-label-sm">Payee *</label>
+              <input
+                className="form-control"
+                list="invoice-payee-list"
+                value={editPayeeName}
+                onChange={(e) => setEditPayeeName(e.target.value)}
+              />
+              <datalist id="invoice-payee-list">
+                {payees.map((p) => <option key={p.id} value={p.name} />)}
+              </datalist>
+            </div>
+            <div className="col-md-3">
               <label className="form-label-sm">Customer Name</label>
               <input className="form-control" value={editCustomer} onChange={(e) => setEditCustomer(e.target.value)} />
             </div>
-            <div className="col-md-4">
+            <div className="col-md-6">
               <label className="form-label-sm">Customer Address</label>
               <input className="form-control" value={editAddress} onChange={(e) => setEditAddress(e.target.value)} />
             </div>
+
             <div className="col-md-3">
-              <label className="form-label-sm">Period</label>
-              <input className="form-control" value={editPeriod} onChange={(e) => setEditPeriod(e.target.value)} />
+              <label className="form-label-sm">Period (YYYY-MM)</label>
+              <input
+                type="month"
+                className="form-control"
+                value={editPeriod && /^\d{4}-\d{2}$/.test(editPeriod) ? editPeriod : ''}
+                onChange={(e) => setEditPeriod(e.target.value)}
+              />
             </div>
             <div className="col-md-3">
               <label className="form-label-sm">Date Issued</label>
@@ -350,92 +466,55 @@ export default function InvoiceDetail() {
               <label className="form-label-sm">Statement Ref</label>
               <input className="form-control" value={editRef} onChange={(e) => setEditRef(e.target.value)} />
             </div>
+            <div className="col-md-3">
+              <label className="form-label-sm">Sub-group</label>
+              <input className="form-control" value={editSubGroup} onChange={(e) => setEditSubGroup(e.target.value)} />
+            </div>
           </div>
         </div>
       </div>
 
       <div className="pro-card mb-3">
-        <div className="pro-card-header"><span>Line Items ({editItems.length})</span></div>
-        <table className="pro-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Branch / Description</th>
-              <th>Invoice No</th>
-              <th>Machine Serial</th>
-              <th>Runs</th>
-              <th>Rate</th>
-              <th>Amount</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {editItems.map((item, idx) => (
-              <tr key={item.id ?? idx}>
-                <td>{idx + 1}</td>
-                <td>
-                  <input
-                    className="form-control"
-                    value={item.branch}
-                    onChange={(e) => handleItemChange(idx, 'branch', e.target.value)}
-                  />
-                </td>
-                <td>
-                  <input
-                    className="form-control"
-                    value={item.invoice_no}
-                    onChange={(e) => handleItemChange(idx, 'invoice_no', e.target.value)}
-                  />
-                </td>
-                <td>
-                  <input
-                    className="form-control"
-                    value={item.machine_serial}
-                    onChange={(e) => handleItemChange(idx, 'machine_serial', e.target.value)}
-                  />
-                </td>
-                <td>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={item.machine_runs}
-                    onChange={(e) => handleItemChange(idx, 'machine_runs', parseInt(e.target.value) || 0)}
-                  />
-                </td>
-                <td>
-                  <input
-                    type="number"
-                    step="0.01"
-                    className="form-control"
-                    value={item.rate_rm}
-                    onChange={(e) => handleItemChange(idx, 'rate_rm', parseFloat(e.target.value) || 0)}
-                  />
-                </td>
-                <td>
-                  <input
-                    type="number"
-                    step="0.01"
-                    className="form-control"
-                    value={item.amount_rm}
-                    onChange={(e) => handleItemChange(idx, 'amount_rm', parseFloat(e.target.value) || 0)}
-                  />
-                </td>
-                <td>
-                  <button className="btn btn-sm btn-outline-danger" onClick={() => handleDeleteItem(idx)}>
-                    <FiTrash2 size={14} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {editItems.length === 0 && (
+        <div className="pro-card-header">
+          <span>Line Items ({editItems.length})</span>
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table className="pro-table">
+            <thead>
               <tr>
-                <td colSpan="8" className="text-center py-4" style={{ color: 'var(--neutral-500)' }}>
-                  No line items. Click "Add Line Item" below.
-                </td>
+                <th style={{ width: 50 }}>#</th>
+                <th>Branch / Description</th>
+                <th style={{ width: 140 }}>Invoice No</th>
+                <th style={{ width: 140 }}>Machine Serial</th>
+                <th style={{ width: 110 }}>Runs</th>
+                <th style={{ width: 110 }}>Rate (RM)</th>
+                <th style={{ width: 120 }}>Amount (RM)</th>
+                <th style={{ width: 50 }}></th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {editItems.map((item, idx) => (
+                <tr key={item.id ?? idx}>
+                  <td>{idx + 1}</td>
+                  <td><input className="form-control" value={item.branch} onChange={(e) => handleItemChange(idx, 'branch', e.target.value)} /></td>
+                  <td><input className="form-control" value={item.invoice_no} onChange={(e) => handleItemChange(idx, 'invoice_no', e.target.value)} /></td>
+                  <td><input className="form-control" value={item.machine_serial} onChange={(e) => handleItemChange(idx, 'machine_serial', e.target.value)} /></td>
+                  <td><input type="number" className="form-control" value={item.machine_runs} onChange={(e) => handleItemChange(idx, 'machine_runs', parseInt(e.target.value) || 0)} /></td>
+                  <td><input type="number" step="0.01" className="form-control" value={item.rate_rm} onChange={(e) => handleItemChange(idx, 'rate_rm', parseFloat(e.target.value) || 0)} /></td>
+                  <td><input type="number" step="0.01" className="form-control" value={item.amount_rm} onChange={(e) => handleItemChange(idx, 'amount_rm', parseFloat(e.target.value) || 0)} /></td>
+                  <td><button className="btn btn-sm btn-outline-danger" onClick={() => handleDeleteItem(idx)}><FiTrash2 size={14} /></button></td>
+                </tr>
+              ))}
+              {editItems.length === 0 && (
+                <tr>
+                  <td colSpan="8" className="text-center py-4" style={{ color: 'var(--neutral-500)' }}>
+                    No line items. Click "Add Line Item" below.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
         <div className="p-3">
           <button className="btn btn-outline-primary w-100" onClick={handleAddItem}>
             <FiPlus size={16} /> Add Line Item

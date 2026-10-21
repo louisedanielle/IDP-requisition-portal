@@ -41,6 +41,11 @@ export const createPayee = async (name) => {
   return data;
 };
 
+export const createCompany = async (name, shortName) => {
+  const { data } = await api.post('/api/companies', { name, short_name: shortName });
+  return data;
+};
+
 // ---------- Documents ----------
 export const uploadDocument = async (file) => {
   const formData = new FormData();
@@ -92,6 +97,15 @@ export const getDashboardStats = async () => {
   return data;
 };
 
+export const getIncomeStats = async (year) => {
+  const { data } = await api.get('/api/dashboard/income-stats', { params: { year } });
+  return data;
+};
+
+export const downloadMonthlyReport = (year) => {
+  window.open(`${API_URL}/api/dashboard/monthly-report?year=${year}`, '_blank');
+};
+
 // ---------- Requisitions ----------
 export const listRequisitions = async (params = {}) => {
   const { data } = await api.get('/api/requisitions', { params });
@@ -118,7 +132,7 @@ export const deleteRequisition = async (id) => {
   return data;
 };
 
-// ---------- Annual Reports (Excel) ----------
+// ---------- Annual Reports ----------
 export const downloadCompanyAnnualReport = (companyId, year) => {
   const url = `${API_URL}/api/companies/${companyId}/annual-report?year=${year}`;
   window.open(url, '_blank');
@@ -129,9 +143,7 @@ export const downloadAllCompaniesAnnualReport = (year) => {
   window.open(url, '_blank');
 };
 
-// ---------- Shared base URL ----------
-export const API_BASE_URL = API_URL;
-
+// ---------- Income / Invoices ----------
 export const uploadIncomeReport = async (file) => {
   const formData = new FormData();
   formData.append('file', file);
@@ -151,17 +163,9 @@ export const listIncomes = async (params = {}) => {
   return data;
 };
 
-export const getIncomeStats = async (year) => {
-  const { data } = await api.get('/api/dashboard/income-stats', { params: { year } });
-  return data;
-};
-
-export const downloadMonthlyReport = (year) => {
-  window.open(`${API_URL}/api/dashboard/monthly-report?year=${year}`, '_blank');
-};
-
-export const createCompany = async (name, shortName) => {
-  const { data } = await api.post('/api/companies', { name, short_name: shortName });
+export const getIncomeFolders = async (companyId) => {
+  const params = companyId ? { company_id: companyId } : {};
+  const { data } = await api.get('/api/incomes/folders', { params });
   return data;
 };
 
@@ -179,5 +183,8 @@ export const deleteIncome = async (id) => {
   const { data } = await api.delete(`/api/incomes/${id}`);
   return data;
 };
+
+// ---------- Shared base URL ----------
+export const API_BASE_URL = API_URL;
 
 export default api;

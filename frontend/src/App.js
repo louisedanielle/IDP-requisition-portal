@@ -1,7 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Navbar, Nav, Container } from 'react-bootstrap';
-import { FiHome, FiUploadCloud, FiFolder, FiEdit3, FiDollarSign } from 'react-icons/fi';
+import { FiHome, FiUploadCloud, FiFolder, FiEdit3, FiDollarSign, FiFileText } from 'react-icons/fi';
 import Dashboard from './pages/Dashboard';
 import Upload from './pages/Upload';
 import Review from './pages/Review';
@@ -10,18 +10,12 @@ import RequisitionDetail from './pages/RequisitionDetail';
 import ManualInput from './pages/ManualInput';
 import Income from './pages/Income';
 import InvoiceDetail from './pages/InvoiceDetail';
+import Invoices from './pages/Invoices';
 
 class ErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { error: null };
-  }
-  static getDerivedStateFromError(error) {
-    return { error };
-  }
-  componentDidCatch(error, info) {
-    console.error('Render error:', error, info);
-  }
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error('Render error:', error, info); }
   render() {
     if (this.state.error) {
       return (
@@ -78,6 +72,7 @@ function App() {
               <NavLink to="/manual" icon={<FiEdit3 size={16} />}>Manual Input</NavLink>
               <NavLink to="/requisitions" icon={<FiFolder size={16}/>}>Requisitions</NavLink>
               <NavLink to="/income" icon={<FiDollarSign size={16} />}>Income</NavLink>
+              <NavLink to="/invoices" icon={<FiFileText size={16} />}>Invoices</NavLink>
             </Nav>
           </Navbar.Collapse>
         </Container>
@@ -94,6 +89,7 @@ function App() {
             <Route path="/requisitions/:id" element={<RequisitionDetail />} />
             <Route path="/income" element={<Income />} />
             <Route path="/income/:id" element={<InvoiceDetail />} />
+            <Route path="/invoices" element={<Invoices />} />
           </Routes>
         </ErrorBoundary>
       </div>

@@ -99,7 +99,7 @@ class Requisition(Base):
 
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     pr_number = Column(String(80), unique=True, nullable=False)
-    
+
     company_id = Column(Uuid, ForeignKey("companies.id"), nullable=True)
     payment_category_id = Column(Uuid, ForeignKey("payment_categories.id"), nullable=True)
     payee_id = Column(Uuid, ForeignKey("payees.id"), nullable=True)
@@ -131,6 +131,7 @@ class Requisition(Base):
         cascade="all, delete-orphan",
     )
 
+
 class LineItem(Base):
     __tablename__ = "line_items"
 
@@ -153,34 +154,42 @@ class LineItem(Base):
 
     requisition = relationship("Requisition", back_populates="line_items")
 
+
 class Income(Base):
     """
     Revenue Sharing Report → Invoice.
-    One Income per (company, customer, period). Line items come from the
-    Revenue Sharing Report's per-branch rows.
+    One Income per (company, category, payee, period, sub_group).
     """
     __tablename__ = "incomes"
 
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     invoice_number = Column(String(80), unique=True, nullable=False)
-    company_id = Column(Uuid, ForeignKey("companies.id"), nullable=True)
-    company_name = Column(String(200), nullable=False)
 
-    customer_name = Column(String(200), nullable=False)   # e.g. "Medicare Solutions Sdn Bhd"
+    # --- lookups (mirrors Requisition) ---
+    company_id = Column(Uuid, ForeignKey("companies.id"), nullable=True)
+    payment_category_id = Column(Uuid, ForeignKey("payment_categories.id"), nullable=True)
+    payee_id = Column(Uuid, ForeignKey("payees.id"), nullable=True)
+
+    company_name = Column(String(200), nullable=False)
+    category_name = Column(String(100), nullable=True)
+    payment_type_name = Column(String(50), nullable=True)
+    payee_name = Column(String(200), nullable=True)
+    sub_group = Column(String(100), nullable=True)
+
+    customer_name = Column(String(200), nullable=False)
     customer_address = Column(Text, nullable=True)
 
-    period = Column(String(20), nullable=True)            # "2026-08"
+    period = Column(String(20), nullable=True)
     date_issued = Column(DateTime, default=datetime.utcnow)
     due_date = Column(DateTime, nullable=True)
 
-    # Currency: RM (primary from the report), plus HKD and USD
     currency = Column(String(10), default="RM")
     total_rm = Column(Float, nullable=False, default=0.0)
     total_hkd = Column(Float, nullable=True)
     total_usd = Column(Float, nullable=True)
 
-    status = Column(String(50), default="draft")          # draft | sent | paid
-    statement_ref = Column(String(80), nullable=True)     # e.g. MSCS.2026.08.001
+    status = Column(String(50), default="draft")
+    statement_ref = Column(String(80), nullable=True)
     notes = Column(Text, nullable=True)
 
     created_date = Column(DateTime, default=datetime.utcnow)

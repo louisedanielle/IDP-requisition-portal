@@ -172,6 +172,7 @@ async def create_company_category(
         "payment_type": payment_type.name,
     }
 
+
 @app.post("/api/companies")
 async def create_company(data: dict, db: Session = Depends(get_db)):
     name = (data.get("name") or "").strip()
@@ -180,7 +181,6 @@ async def create_company(data: dict, db: Session = Depends(get_db)):
     if not name:
         raise HTTPException(400, "Company name is required")
     if not short_name:
-        # Fallback if no short name is given (e.g., first 3 letters)
         short_name = name[:3].upper()
 
     existing = db.query(Company).filter(Company.name == name).first()
@@ -191,8 +191,9 @@ async def create_company(data: dict, db: Session = Depends(get_db)):
     db.add(company)
     db.commit()
     db.refresh(company)
-    
+
     return {"id": str(company.id), "name": company.name, "short_name": company.short_name}
+
 
 @app.get("/api/payees")
 async def list_payees(db: Session = Depends(get_db)):
@@ -278,10 +279,6 @@ async def upload_document(
 
 @app.post("/api/documents/manual")
 async def create_manual_document(db: Session = Depends(get_db)):
-    """
-    Create a blank Document so the Review page can be opened manually
-    without uploading a file.
-    """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     document = Document(
         filename=f"manual_{timestamp}",
@@ -387,7 +384,7 @@ async def get_extracted(doc_id: UUID, db: Session = Depends(get_db)):
     }
 
 
-# ============ SUGGESTIONS (AUTO-FILL) ============
+# ============ SUGGESTIONS ============
 
 @app.get("/api/documents/{doc_id}/suggestions")
 async def get_suggestions(doc_id: UUID, db: Session = Depends(get_db)):
@@ -553,7 +550,6 @@ async def save_review(
     )
 
     if requisition is None:
-        # Try up to 3 times in case of a PR-number collision
         last_error = None
         for attempt in range(3):
             try:
@@ -569,7 +565,7 @@ async def save_review(
                     payee_name=payee_name,
                     period=period,
                     frequency=category.frequency,
-                    sub_group=sub_group, 
+                    sub_group=sub_group,
                     applicant="Juliana",
                     nature="Payment Requisition",
                     total_amount=0.0,
@@ -682,13 +678,6 @@ async def reprocess_document(doc_id: UUID, db: Session = Depends(get_db)):
 
 @app.get("/api/dashboard/stats")
 async def get_dashboard_stats(db: Session = Depends(get_db)):
-    """
-    Dashboard summary:
-      - Last month: amount paid + count
-      - This month: amount paid + count
-      - This year: amount paid + count
-      - Breakdown: Company → Category → { count, total }  (this year)
-    """
     from dateutil.relativedelta import relativedelta
 
     today = datetime.utcnow().date()
@@ -791,9 +780,6 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
 # ============ ANNUAL REPORT EXCEL ============
 
 def _build_annual_report_sheet(wb, company_name: str, year: str, requisitions: list):
-    """
-    Add one worksheet to `wb` showing Category × Month for the given company & year.
-    """
     import openpyxl
     from openpyxl.styles import Font, Border, Side, Alignment
 
@@ -908,10 +894,6 @@ async def company_annual_report(
     year: str | None = None,
     db: Session = Depends(get_db),
 ):
-    """
-    Download an Excel workbook for a single company showing
-    Category × Month for the given year (defaults to current year).
-    """
     import openpyxl
     import tempfile
 
@@ -956,10 +938,6 @@ async def dashboard_annual_report(
     year: str | None = None,
     db: Session = Depends(get_db),
 ):
-    """
-    Download one workbook with one sheet per company (Category × Month),
-    plus a Summary sheet totalling across all companies.
-    """
     import openpyxl
     import tempfile
     from openpyxl.styles import Font, Border, Side, Alignment
@@ -1126,11 +1104,6 @@ async def list_folder_view(
     company_id: UUID | None = None,
     db: Session = Depends(get_db),
 ):
-    """
-    Return a nested tree for the folder view:
-
-      Company → Year → Month → Category → Payee → [ requisitions ]
-    """
     q = db.query(Requisition)
     if company_id:
         q = q.filter(Requisition.company_id == company_id)
@@ -1208,7 +1181,7 @@ async def get_requisition(req_id: UUID, db: Session = Depends(get_db)):
         "nature": req.nature,
         "period": req.period,
         "frequency": req.frequency,
-        "sub_group": req.sub_group,  
+        "sub_group": req.sub_group,
         "total_amount": req.total_amount,
         "status": req.status,
         "created_date": req.created_date.isoformat() if req.created_date else None,
@@ -1225,34 +1198,17 @@ async def get_requisition(req_id: UUID, db: Session = Depends(get_db)):
         ],
     }
 
+
 @app.put("/api/requisitions/{req_id}")
 async def update_requisition(
     req_id: UUID,
     data: dict,
     db: Session = Depends(get_db),
 ):
-    """
-    Fully update a requisition. Any of these fields may be included in the body:
-
-      {
-        "pr_number": "LSI-PR-2026-005",
-        "company_id": "<uuid>",
-        "payment_category_id": "<uuid>",
-        "payee_name": "Gu Bai Chuan Cole",
-        "period": "2026-07",
-        "line_items": [
-            {"date": "2026-07-15", "description": "...", "amount_hkd": 100.00, "category": "Hotel"},
-            ...
-        ]
-      }
-
-    Unspecified fields are left unchanged.
-    """
     req = db.query(Requisition).filter(Requisition.id == req_id).first()
     if not req:
         raise HTTPException(404, "Requisition not found")
 
-    # ---------------- PR number ----------------
     if "pr_number" in data:
         new_pr = (data.get("pr_number") or "").strip()
         if not new_pr:
@@ -1267,7 +1223,6 @@ async def update_requisition(
                 raise HTTPException(400, f"PR number '{new_pr}' already exists")
             req.pr_number = new_pr
 
-    # ---------------- Company + Category ----------------
     new_company_id = _to_uuid(data.get("company_id"))
     new_category_id = _to_uuid(data.get("payment_category_id"))
 
@@ -1291,7 +1246,6 @@ async def update_requisition(
         req.payment_type_name = new_category.payment_type.name
         req.frequency = new_category.frequency
 
-    # ---------------- Payee ----------------
     if "payee_name" in data:
         new_payee_name = (data.get("payee_name") or "").strip()
         if not new_payee_name:
@@ -1304,19 +1258,15 @@ async def update_requisition(
         req.payee_id = payee.id
         req.payee_name = new_payee_name
 
-    # ---------------- Period ----------------
     if "period" in data:
         req.period = _normalize_period(data.get("period"))
 
-    # ---------------- Line items ----------------
     if "line_items" in data and data["line_items"] is not None:
         line_items = data["line_items"]
 
-        # Delete existing line items
         db.query(LineItem).filter(LineItem.requisition_id == req.id).delete()
         db.flush()
 
-        # Add new ones
         for idx, item in enumerate(line_items):
             amount = float(item.get("amount_hkd", 0) or 0)
             line_item = LineItem(
@@ -1332,7 +1282,6 @@ async def update_requisition(
 
         db.flush()
 
-        # Recompute total = sum of line items
         all_items = (
             db.query(LineItem)
             .filter(LineItem.requisition_id == req.id)
@@ -1343,7 +1292,6 @@ async def update_requisition(
     db.commit()
     db.refresh(req)
 
-    # Regenerate the Word document with the new values
     try:
         _regenerate_word(db, req)
     except Exception as e:
@@ -1355,6 +1303,7 @@ async def update_requisition(
         "pr_number": req.pr_number,
         "total_amount": req.total_amount,
     }
+
 
 @app.delete("/api/requisitions/{req_id}")
 async def delete_requisition(req_id: UUID, db: Session = Depends(get_db)):
@@ -1489,20 +1438,35 @@ async def export_excel(req_id: UUID, db: Session = Depends(get_db)):
         filename=f"{req.pr_number}_Detail List.xlsx",
     )
 
-revenue_service = RevenueService()
-invoice_generator = InvoiceGenerator()
 
 # ============ INCOME / INVOICES ============
 
+revenue_service = RevenueService()
+invoice_generator = InvoiceGenerator()
+
+
+def _resolve_income_relations(db, company_id, payment_category_id, payee_name):
+    company = db.query(Company).filter(Company.id == company_id).first() if company_id else None
+    category = None
+    if payment_category_id:
+        category = (
+            db.query(PaymentCategory)
+            .filter(PaymentCategory.id == payment_category_id)
+            .first()
+        )
+    payee = None
+    if payee_name:
+        name = payee_name.strip()
+        payee = db.query(Payee).filter(Payee.name == name).first()
+        if not payee:
+            payee = Payee(name=name, payee_type="other")
+            db.add(payee)
+            db.flush()
+    return {"company": company, "category": category, "payee": payee}
+
+
 @app.post("/api/incomes/upload")
-async def upload_income_report(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    """
-    Accepts a Revenue Sharing Report or similar invoice-ready PDF/image.
-    Extracts the data synchronously (no Celery needed for this).
-    """
+async def upload_income_report(file: UploadFile = File(...), db: Session = Depends(get_db)):
     allowed = ["image/jpeg", "image/png", "application/pdf"]
     if file.content_type not in allowed:
         raise HTTPException(400, f"File type not allowed. Allowed: {allowed}")
@@ -1517,55 +1481,54 @@ async def upload_income_report(
     result = await revenue_service.extract_revenue_report(filepath)
     if result.get("error"):
         raise HTTPException(500, f"Extraction failed: {result['error']}")
-
     return result
 
 
 @app.post("/api/incomes")
 async def create_income(data: dict, db: Session = Depends(get_db)):
     company_id = _to_uuid(data.get("company_id"))
-    company = db.query(Company).filter(Company.id == company_id).first() if company_id else None
+    if not company_id:
+        raise HTTPException(400, "company_id is required")
+
+    payment_category_id = _to_uuid(data.get("payment_category_id"))
+    payee_name = (data.get("payee_name") or "").strip() or None
+
+    rel = _resolve_income_relations(db, company_id, payment_category_id, payee_name)
+    company = rel["company"]
     if not company:
         raise HTTPException(400, "Valid company_id is required")
+    category = rel["category"]
+    payee = rel["payee"]
 
-    # 1. Determine the invoice number (use frontend override or auto-generate)
-    requested_invoice_num = (data.get("invoice_number") or "").strip()
-    
-    if requested_invoice_num:
-        invoice_number = requested_invoice_num
+    requested = (data.get("invoice_number") or "").strip()
+    if requested:
+        invoice_number = requested
     else:
-        # Auto-generate based on company short_name (e.g., LSI, LSHK, LSH)
+        import re as _re
         prefix = (company.short_name or "LSI").upper()
-        year = datetime.utcnow().year
-        
-        # Look for the highest number for this prefix
         last = (
             db.query(Income)
             .filter(Income.invoice_number.like(f"{prefix}%"))
             .order_by(Income.invoice_number.desc())
             .first()
         )
-        
         next_num = 1
         if last:
-            try:
-                # Extract digits from the end of the string
-                digits = re.search(r'(\d+)$', last.invoice_number)
-                if digits:
-                    next_num = int(digits.group(1)) + 1
-            except ValueError:
-                pass
-                
+            m = _re.search(r"(\d+)$", last.invoice_number or "")
+            if m:
+                next_num = int(m.group(1)) + 1
         invoice_number = f"{prefix}{next_num:04d}"
 
-    # 2. Save Income record
+    period = _normalize_period(data.get("period"))
+    sub_group = (data.get("sub_group") or "").strip() or None
+
     income = Income(
         invoice_number=invoice_number,
         company_id=company.id,
         company_name=company.name,
         customer_name=data.get("customer_name") or "Unknown Customer",
         customer_address=data.get("customer_address"),
-        period=_normalize_period(data.get("period")),
+        period=period,
         date_issued=_parse_date(data.get("date_issued")) or datetime.utcnow(),
         total_rm=float(data.get("total_rm") or 0),
         total_hkd=float(data["total_hkd"]) if data.get("total_hkd") else None,
@@ -1574,11 +1537,17 @@ async def create_income(data: dict, db: Session = Depends(get_db)):
         status="draft",
         statement_ref=data.get("statement_ref"),
         notes=data.get("notes"),
+        payment_category_id=category.id if category else None,
+        category_name=category.name if category else None,
+        payment_type_name=category.payment_type.name if category else None,
+        payee_id=payee.id if payee else None,
+        payee_name=payee.name if payee else None,
+        sub_group=sub_group,
     )
     db.add(income)
     db.flush()
 
-    for idx, li in enumerate(data.get("lines", []), start=1):
+    for idx, li in enumerate(data.get("lines", data.get("line_items", [])), start=1):
         line = IncomeLineItem(
             income_id=income.id,
             item_number=idx,
@@ -1586,8 +1555,8 @@ async def create_income(data: dict, db: Session = Depends(get_db)):
             invoice_no=li.get("invoice_no"),
             machine_serial=li.get("machine_serial"),
             machine_runs=int(li.get("machine_runs") or 0),
-            rate=float(li.get("rate_rm") or 0),
-            amount=float(li.get("amount_rm") or 0),
+            rate=float(li.get("rate_rm") or li.get("rate") or 0),
+            amount=float(li.get("amount_rm") or li.get("amount") or 0),
             currency="RM",
         )
         db.add(line)
@@ -1599,22 +1568,38 @@ async def create_income(data: dict, db: Session = Depends(get_db)):
 @app.get("/api/incomes")
 async def list_incomes(
     company_id: UUID | None = None,
+    payment_category_id: UUID | None = None,
+    payee_name: str | None = None,
     period: str | None = None,
+    status: str | None = None,
     db: Session = Depends(get_db),
 ):
     q = db.query(Income)
     if company_id:
         q = q.filter(Income.company_id == company_id)
+    if payment_category_id:
+        q = q.filter(Income.payment_category_id == payment_category_id)
+    if payee_name:
+        q = q.filter(Income.payee_name == payee_name)
     if period:
         q = q.filter(Income.period == period)
+    if status:
+        q = q.filter(Income.status == status)
 
     rows = q.order_by(Income.date_issued.desc()).all()
     return [
         {
             "id": str(r.id),
             "invoice_number": r.invoice_number,
+            "company_id": str(r.company_id) if r.company_id else None,
             "company_name": r.company_name,
             "customer_name": r.customer_name,
+            "payee_name": r.payee_name,
+            "category_name": r.category_name,
+            "payment_type_name": r.payment_type_name,
+            "payment_category_id": (
+                str(r.payment_category_id) if r.payment_category_id else None
+            ),
             "period": r.period,
             "date_issued": r.date_issued.isoformat() if r.date_issued else None,
             "currency": r.currency,
@@ -1622,9 +1607,61 @@ async def list_incomes(
             "total_hkd": r.total_hkd,
             "total_usd": r.total_usd,
             "status": r.status,
+            "sub_group": r.sub_group,
         }
         for r in rows
     ]
+
+
+@app.get("/api/incomes/folders")
+async def list_income_folders(company_id: UUID | None = None, db: Session = Depends(get_db)):
+    q = db.query(Income)
+    if company_id:
+        q = q.filter(Income.company_id == company_id)
+    rows = q.order_by(Income.date_issued.desc()).all()
+
+    tree = {}
+    for r in rows:
+        company = r.company_name or "Unknown Company"
+        year, month = _split_period(r.period)
+        category = r.category_name or "Uncategorized"
+        payee = r.payee_name or r.customer_name or "Unknown Payee"
+
+        tree.setdefault(company, {})
+        tree[company].setdefault(year, {})
+        tree[company][year].setdefault(month, {})
+        tree[company][year][month].setdefault(category, {})
+        tree[company][year][month][category].setdefault(payee, []).append({
+            "id": str(r.id),
+            "invoice_number": r.invoice_number,
+            "customer_name": r.customer_name,
+            "payee_name": r.payee_name,
+            "period": r.period,
+            "total_rm": r.total_rm,
+            "total_hkd": r.total_hkd,
+            "status": r.status,
+            "sub_group": r.sub_group,
+            "date_issued": r.date_issued.isoformat() if r.date_issued else None,
+        })
+
+    sorted_tree = {}
+    for company in sorted(tree.keys()):
+        sorted_tree[company] = {}
+        for year in sorted(tree[company].keys(), reverse=True):
+            sorted_tree[company][year] = {}
+            for month in sorted(tree[company][year].keys(), reverse=True):
+                sorted_tree[company][year][month] = {}
+                for category in sorted(tree[company][year][month].keys()):
+                    sorted_tree[company][year][month][category] = {}
+                    for payee in sorted(tree[company][year][month][category].keys()):
+                        invs = sorted(
+                            tree[company][year][month][category][payee],
+                            key=lambda x: x.get("date_issued") or "",
+                            reverse=True,
+                        )
+                        sorted_tree[company][year][month][category][payee] = invs
+    return sorted_tree
+
 
 @app.get("/api/incomes/{income_id}")
 async def get_income(income_id: UUID, db: Session = Depends(get_db)):
@@ -1639,12 +1676,35 @@ async def get_income(income_id: UUID, db: Session = Depends(get_db)):
         .all()
     )
 
+    normalised = [
+        {
+            "id": str(li.id),
+            "item_number": li.item_number,
+            "description": li.description,
+            "branch": li.description,
+            "invoice_no": li.invoice_no,
+            "machine_serial": li.machine_serial,
+            "machine_runs": li.machine_runs,
+            "rate": li.rate,
+            "rate_rm": li.rate,
+            "amount": li.amount,
+            "amount_rm": li.amount,
+        }
+        for li in lines
+    ]
+
     return {
         "id": str(r.id),
         "invoice_number": r.invoice_number,
+        "company_id": str(r.company_id) if r.company_id else None,
         "company_name": r.company_name,
         "customer_name": r.customer_name,
         "customer_address": r.customer_address,
+        "payee_id": str(r.payee_id) if r.payee_id else None,
+        "payee_name": r.payee_name,
+        "category_name": r.category_name,
+        "payment_category_id": str(r.payment_category_id) if r.payment_category_id else None,
+        "payment_type_name": r.payment_type_name,
         "period": r.period,
         "date_issued": r.date_issued.isoformat() if r.date_issued else None,
         "total_rm": r.total_rm,
@@ -1652,20 +1712,11 @@ async def get_income(income_id: UUID, db: Session = Depends(get_db)):
         "status": r.status,
         "statement_ref": r.statement_ref,
         "notes": r.notes,
-        "line_items": [
-            {
-                "id": str(li.id),
-                "item_number": li.item_number,
-                "description": li.description,
-                "invoice_no": li.invoice_no,
-                "machine_serial": li.machine_serial,
-                "machine_runs": li.machine_runs,
-                "rate": li.rate,
-                "amount": li.amount,
-            }
-            for li in lines
-        ],
+        "sub_group": r.sub_group,
+        "line_items": normalised,
+        "lines": normalised,
     }
+
 
 @app.put("/api/incomes/{income_id}")
 async def update_income(income_id: UUID, data: dict, db: Session = Depends(get_db)):
@@ -1691,15 +1742,54 @@ async def update_income(income_id: UUID, data: dict, db: Session = Depends(get_d
         r.statement_ref = data["statement_ref"]
     if "notes" in data:
         r.notes = data["notes"]
+    if "sub_group" in data:
+        r.sub_group = (data.get("sub_group") or "").strip() or None
 
-    # Replace line items
-    if "line_items" in data:
+    new_company_id = _to_uuid(data.get("company_id"))
+    new_category_id = _to_uuid(data.get("payment_category_id"))
+    new_payee_name = data.get("payee_name")
+
+    if new_company_id:
+        company = db.query(Company).filter(Company.id == new_company_id).first()
+        if not company:
+            raise HTTPException(404, "Company not found")
+        r.company_id = company.id
+        r.company_name = company.name
+
+    if new_category_id:
+        category = (
+            db.query(PaymentCategory)
+            .filter(PaymentCategory.id == new_category_id)
+            .first()
+        )
+        if not category:
+            raise HTTPException(404, "Payment category not found")
+        r.payment_category_id = category.id
+        r.category_name = category.name
+        r.payment_type_name = category.payment_type.name
+
+    if new_payee_name is not None:
+        name = (new_payee_name or "").strip()
+        if name:
+            payee = db.query(Payee).filter(Payee.name == name).first()
+            if not payee:
+                payee = Payee(name=name, payee_type="other")
+                db.add(payee)
+                db.flush()
+            r.payee_id = payee.id
+            r.payee_name = name
+        else:
+            r.payee_id = None
+            r.payee_name = None
+
+    lines_payload = data.get("line_items", data.get("lines"))
+    if lines_payload is not None:
         db.query(IncomeLineItem).filter(IncomeLineItem.income_id == r.id).delete()
-        for idx, li in enumerate(data["line_items"], start=1):
+        for idx, li in enumerate(lines_payload, start=1):
             line = IncomeLineItem(
                 income_id=r.id,
                 item_number=idx,
-                description=li.get("description") or li.get("branch") or "",
+                description=li.get("branch") or li.get("description") or "",
                 invoice_no=li.get("invoice_no"),
                 machine_serial=li.get("machine_serial"),
                 machine_runs=int(li.get("machine_runs") or 0),
@@ -1709,15 +1799,24 @@ async def update_income(income_id: UUID, data: dict, db: Session = Depends(get_d
             )
             db.add(line)
 
+        if "total_rm" not in data:
+            db.flush()
+            all_lines = (
+                db.query(IncomeLineItem)
+                .filter(IncomeLineItem.income_id == r.id)
+                .all()
+            )
+            r.total_rm = sum(li.amount for li in all_lines)
+
     db.commit()
     return {"message": "Updated successfully"}
+
 
 @app.delete("/api/incomes/{income_id}")
 async def delete_income(income_id: UUID, db: Session = Depends(get_db)):
     r = db.query(Income).filter(Income.id == income_id).first()
     if not r:
         raise HTTPException(404, "Income not found")
-
     db.query(IncomeLineItem).filter(IncomeLineItem.income_id == income_id).delete()
     db.delete(r)
     db.commit()
@@ -1747,6 +1846,7 @@ async def export_invoice(income_id: UUID, db: Session = Depends(get_db)):
             {
                 "description": li.description,
                 "invoice_no": li.invoice_no,
+                "machine_serial": li.machine_serial,
                 "machine_runs": li.machine_runs,
                 "rate": li.rate,
                 "amount": li.amount,
@@ -1757,11 +1857,12 @@ async def export_invoice(income_id: UUID, db: Session = Depends(get_db)):
         "total_hkd": r.total_hkd,
         "total_usd": r.total_usd,
         "notes": r.notes or "",
+        "period": r.period,
+        "statement_ref": r.statement_ref,
         "payment_terms": f"Monthly Revenue Sharing - {r.period or ''}. Payment due within 15 days.",
     }
 
     path = invoice_generator.generate_invoice_docx(doc_data)
-
     return FileResponse(
         path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -1770,23 +1871,9 @@ async def export_invoice(income_id: UUID, db: Session = Depends(get_db)):
 
 
 @app.get("/api/dashboard/income-stats")
-async def get_income_stats(
-    year: str | None = None,
-    db: Session = Depends(get_db),
-):
-    """
-    Income breakdown for a year:
-      - Total income (RM, and HKD if available)
-      - Breakdown by company
-      - Month × Company income matrix
-    """
+async def get_income_stats(year: str | None = None, db: Session = Depends(get_db)):
     year = (year or datetime.utcnow().strftime("%Y")).strip()
-
-    rows = (
-        db.query(Income)
-        .filter(Income.period.like(f"{year}%"))
-        .all()
-    )
+    rows = db.query(Income).filter(Income.period.like(f"{year}%")).all()
 
     months = ["01","02","03","04","05","06","07","08","09","10","11","12"]
     by_company: dict = {}
@@ -1797,7 +1884,6 @@ async def get_income_stats(
     for r in rows:
         company = r.company_name or "Unknown"
         _, month = _split_period(r.period)
-
         by_company.setdefault(company, {
             "total_rm": 0.0, "total_hkd": 0.0, "invoices": 0,
             "monthly": {m: {"rm": 0.0, "hkd": 0.0} for m in months},
@@ -1805,13 +1891,11 @@ async def get_income_stats(
         by_company[company]["total_rm"] += r.total_rm or 0
         by_company[company]["total_hkd"] += r.total_hkd or 0
         by_company[company]["invoices"] += 1
-
         if month in months:
             by_company[company]["monthly"][month]["rm"] += r.total_rm or 0
             by_company[company]["monthly"][month]["hkd"] += r.total_hkd or 0
             monthly_totals[month]["rm"] += r.total_rm or 0
             monthly_totals[month]["hkd"] += r.total_hkd or 0
-
         total_rm += r.total_rm or 0
         total_hkd += r.total_hkd or 0
 
@@ -1825,16 +1909,7 @@ async def get_income_stats(
 
 
 @app.get("/api/dashboard/monthly-report")
-async def monthly_report_excel(
-    year: str | None = None,
-    db: Session = Depends(get_db),
-):
-    """
-    Download a full Income vs Expenses Excel report:
-      Sheet 1: Monthly summary (income by company per month, expenses by category)
-      Sheet 2: Income detail (one row per invoice)
-      Sheet 3: Expense detail (one row per requisition)
-    """
+async def monthly_report_excel(year: str | None = None, db: Session = Depends(get_db)):
     import openpyxl
     from openpyxl.styles import Font, Alignment, Border, Side
     import tempfile
@@ -1857,7 +1932,6 @@ async def monthly_report_excel(
 
     months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
-    # ---------- Sheet 1: Monthly Summary ----------
     ws = wb.active
     ws.title = f"Summary {year}"
 
@@ -1889,7 +1963,6 @@ async def monthly_report_excel(
         total.alignment = right
         return r + 1
 
-    # Income by company
     income_by_company: dict = {}
     for r in incomes:
         company = r.company_name or "Unknown"
@@ -1907,7 +1980,6 @@ async def monthly_report_excel(
     for company in sorted(income_by_company.keys()):
         r = add_row(r, "Income", company, income_by_company[company])
 
-    # Expenses by category
     expense_by_cat: dict = {}
     for e in expenses:
         cat = e.category_name or "Uncategorized"
@@ -1935,7 +2007,6 @@ async def monthly_report_excel(
         for cc in range(1, total_col + 1):
             ws.cell(row=rr, column=cc).border = border
 
-    # ---------- Sheet 2: Income Detail ----------
     wsi = wb.create_sheet("Income Detail")
     hdr = ["Invoice No", "Company", "Customer", "Period", "Date", "Currency", "Total RM", "Total HKD", "Status"]
     for i, h in enumerate(hdr, start=1):
@@ -1958,7 +2029,6 @@ async def monthly_report_excel(
     for col in ["D","E","F","G","H","I"]:
         wsi.column_dimensions[col].width = 14
 
-    # ---------- Sheet 3: Expense Detail ----------
     wse = wb.create_sheet("Expense Detail")
     hdr = ["PR No", "Company", "Category", "Payee", "Period", "Total HKD", "Status"]
     for i, h in enumerate(hdr, start=1):
@@ -1991,6 +2061,7 @@ async def monthly_report_excel(
         filename=f"Monthly Report {year}.xlsx",
     )
 
+
 # ============ HELPERS ============
 
 def _empty_suggestions():
@@ -2013,16 +2084,13 @@ def _resolve_payee(ai_payee: str | None) -> str | None:
     if not ai_payee:
         return None
     needle = _normalize_name(ai_payee)
-
     for alias, canonical in settings.PAYEE_ALIASES.items():
         if _normalize_name(alias) == needle:
             return canonical
-
     for alias, canonical in settings.PAYEE_ALIASES.items():
         a = _normalize_name(alias)
         if len(a) >= 4 and (a in needle or needle in a):
             return canonical
-
     return ai_payee.strip()
 
 
@@ -2100,25 +2168,12 @@ def _regenerate_word(db: Session, req: Requisition) -> str:
 
 
 def _generate_pr_number(db: Session, company_short: str | None = None) -> str:
-    """
-    Generate the next PR number for a company.
-    Each company has its own sequence, format: <SHORT>-PR-YYYY-NNN.
-
-    Examples:
-      LSI-PR-2026-001
-      LSHK-PR-2026-001
-      LSH-PR-2026-001
-
-    If `company_short` is None or unknown, defaults to "LSI".
-    """
     short = (company_short or "LSI").strip().upper()
-    # Sanitize: letters/digits only, max 6 chars
     short = "".join(c for c in short if c.isalnum())[:6] or "LSI"
 
     year = datetime.utcnow().year
     prefix = f"{short}-PR-{year}-"
 
-    # Find every requisition matching this company's prefix
     rows = (
         db.query(Requisition)
         .filter(Requisition.pr_number.like(f"{prefix}%"))
@@ -2183,13 +2238,6 @@ def _parse_date(date_str):
 
 
 def _split_period(period: str | None) -> tuple:
-    """
-    Return (year, month) from a period string.
-      "2026-07"       → ("2026", "07")
-      "2026"          → ("2026", "—")
-      "2026-07-15"    → ("2026", "07")
-      None / garbage  → ("—", "—")
-    """
     if not period or not isinstance(period, str):
         return ("—", "—")
 
@@ -2208,15 +2256,6 @@ def _split_period(period: str | None) -> tuple:
 
 
 def _normalize_period(value):
-    """
-    Normalize a period string:
-      "2026-07"     → "2026-07"
-      "2026/07"     → "2026-07"
-      "2026-7"      → "2026-07"
-      "2026"        → "2026"
-      "2026-07-15"  → "2026-07"
-      "" / None     → None
-    """
     if not value:
         return None
 
@@ -2236,10 +2275,6 @@ def _normalize_period(value):
 
 
 def _default_total_description(nature_name: str, doc_type: str | None = None) -> str:
-    """
-    Build a sensible description when a document only has a total and no
-    line items. Used to synthesize a single line item from the total.
-    """
     nature_lower = (nature_name or "").lower()
     doc_lower = (doc_type or "").lower()
 
