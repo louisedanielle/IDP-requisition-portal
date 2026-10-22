@@ -141,13 +141,13 @@ function Dashboard() {
               </div>
             </div>
             <div className="col-lg-4 col-md-6">
-              <div className="stat-card h-100" style={{ borderLeft: '4px solid #6366f1' }}>
+              <div className="stat-card h-100" style={{ borderLeft: '4px solid var(--success)' }}>
                 <div className="stat-label">Total Income (HKD)</div>
                 <div className="stat-value success">HK${fmt(totalIncomeHkd)}</div>
               </div>
             </div>
             <div className="col-lg-4 col-md-6">
-              <div className="stat-card h-100" style={{ borderLeft: '4px solid #10b981' }}>
+              <div className="stat-card h-100" style={{ borderLeft: '4px solid var(--success)' }}>
                 <div className="stat-label">Total Income (USD)</div>
                 <div className="stat-value success">US${fmt(totalIncomeUsd)}</div>
               </div>

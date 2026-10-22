@@ -106,7 +106,6 @@ function Review() {
           }
         }
 
-        if (sug.payee_name) setPayee(sug.payee_name);
         if (sug.period) setPeriod(sug.period);
 
         setSharedDate(new Date().toISOString().split('T')[0]);
@@ -213,6 +212,8 @@ function Review() {
     if (!paymentType) return setError('Please select a payment type.');
     if (!natureId) return setError('Please select a nature.');
     if (!payee) return setError('Please select a payee.');
+    if (!period || !/^\d{4}-\d{2}$/.test(period))
+      return setError('Please select a period (YYYY-MM).');
     if (items.length === 0) return setError('Please add at least one item.');
     if (isFreeForm && !sharedDate) return setError('Please select a date.');
 
@@ -410,16 +411,16 @@ function Review() {
             </div>
 
             <div className="col-md-3">
-              <label className="form-label-sm">Period (Year & Month)</label>
+              <label className="form-label-sm">Period *</label>
               <input
                 type="month"
                 className="form-control"
                 value={period && /^\d{4}-\d{2}$/.test(period) ? period : ''}
                 onChange={(e) => setPeriod(e.target.value)}
+                style={{
+                  borderColor: !period ? 'var(--danger)' : undefined,
+                }}
               />
-              <div style={{ fontSize: '0.7rem', color: 'var(--neutral-500)', marginTop: '0.25rem' }}>
-                Format: YYYY-MM
-              </div>
             </div>
           </div>
 

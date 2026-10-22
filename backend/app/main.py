@@ -1056,6 +1056,11 @@ async def dashboard_annual_report(
 
 
 # ============ REQUISITIONS ============
+#
+# ⚠️  ROUTE ORDER MATTERS!
+# Static routes (folders, monthly-summary) MUST be declared BEFORE
+# dynamic routes ({req_id}). Otherwise FastAPI tries to parse the
+# static path as a UUID and returns 422.
 
 @app.get("/api/requisitions")
 async def list_requisitions(
@@ -1156,6 +1161,29 @@ async def list_folder_view(
                         sorted_tree[company][year][month][category][payee] = prs
 
     return sorted_tree
+
+
+# ⚠️ MUST come BEFORE /api/requisitions/{req_id}
+@app.get("/api/requisitions/monthly-summary")
+async def download_monthly_pr_summary(
+    year: str,
+    month: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Download a workbook with:
+      Sheet 1: PAYMENT REQUISITION SUMMARY-<DD.M.YYYY>
+      One tab per PR in that month
+      One detail-list tab per reimbursement PR
+    """
+    path = build_monthly_pr_summary_workbook(db, year, f"{int(month):02d}")
+
+    safe = f"HK PRs Summary_{year}{int(month):02d}.xlsx"
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=safe,
+    )
 
 
 @app.get("/api/requisitions/{req_id}")
@@ -1446,26 +1474,6 @@ revenue_service = RevenueService()
 invoice_generator = InvoiceGenerator()
 
 
-def _resolve_income_relations(db, company_id, payment_category_id, payee_name):
-    company = db.query(Company).filter(Company.id == company_id).first() if company_id else None
-    category = None
-    if payment_category_id:
-        category = (
-            db.query(PaymentCategory)
-            .filter(PaymentCategory.id == payment_category_id)
-            .first()
-        )
-    payee = None
-    if payee_name:
-        name = payee_name.strip()
-        payee = db.query(Payee).filter(Payee.name == name).first()
-        if not payee:
-            payee = Payee(name=name, payee_type="other")
-            db.add(payee)
-            db.flush()
-    return {"company": company, "category": category, "payee": payee}
-
-
 @app.post("/api/incomes/upload")
 async def upload_income_report(file: UploadFile = File(...), db: Session = Depends(get_db)):
     allowed = ["image/jpeg", "image/png", "application/pdf"]
@@ -1485,7 +1493,6 @@ async def upload_income_report(file: UploadFile = File(...), db: Session = Depen
     return result
 
 
-@app.post("/api/incomes")
 @app.post("/api/incomes")
 async def create_income(data: dict, db: Session = Depends(get_db)):
     company_id = _to_uuid(data.get("company_id"))
@@ -1635,6 +1642,7 @@ async def list_income_folders(company_id: UUID | None = None, db: Session = Depe
             "total_rm": r.total_rm,
             "total_hkd": r.total_hkd,
             "status": r.status,
+            "sub_group": r.sub_group,
             "date_issued": r.date_issued.isoformat() if r.date_issued else None,
         })
 
@@ -1888,6 +1896,7 @@ async def get_income_stats(year: str | None = None, db: Session = Depends(get_db
         "monthly_totals": monthly_totals,
     }
 
+
 @app.get("/api/dashboard/monthly-report")
 async def monthly_report_excel(year: str | None = None, db: Session = Depends(get_db)):
     import openpyxl
@@ -2041,28 +2050,6 @@ async def monthly_report_excel(year: str | None = None, db: Session = Depends(ge
         filename=f"Monthly Report {year}.xlsx",
     )
 
-@app.get("/api/requisitions/monthly-summary")
-async def download_monthly_pr_summary(
-    year: str,
-    month: str,
-    db: Session = Depends(get_db),
-):
-    """
-    Download a workbook with:
-      Sheet 1: PAYMENT REQUISITION SUMMARY-<DD.M.YYYY>
-      One tab per PR in that month
-      One detail-list tab per reimbursement PR
-    """
-    import tempfile
-
-    path = build_monthly_pr_summary_workbook(db, year, f"{int(month):02d}")
-
-    safe = f"HK PRs Summary_{year}{int(month):02d}.xlsx"
-    return FileResponse(
-        path,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=safe,
-    )
 
 # ============ HELPERS ============
 
