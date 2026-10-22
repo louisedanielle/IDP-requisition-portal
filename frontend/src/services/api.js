@@ -188,6 +188,15 @@ export const deleteIncome = async (id) => {
   return data;
 };
 
+export const downloadMonthlyPRSummary = (year, month) => {
+  const y = year;
+  const m = String(month).padStart(2, '0');
+  window.open(
+    `${API_URL}/api/requisitions/monthly-summary?year=${y}&month=${m}`,
+    '_blank'
+  );
+};
+
 // ---------- Shared base URL ----------
 export const API_BASE_URL = API_URL;
 

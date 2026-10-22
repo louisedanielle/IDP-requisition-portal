@@ -409,7 +409,7 @@ export default function Income() {
                   />
                 </div>
                 <div className="col-md-4">
-                  <label className="form-label-sm">Total HKD (optional)</label>
+                  <label className="form-label-sm">Total HKD</label>
                   <input
                     type="number"
                     className="form-control"
@@ -417,6 +417,18 @@ export default function Income() {
                     onChange={(e) => setExtraction({
                       ...extraction,
                       total_hkd: e.target.value === '' ? null : parseFloat(e.target.value) || 0,
+                    })}
+                  />
+                </div>
+                <div className="col-md-4">
+                  <label className="form-label-sm">Total USD</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={extraction.total_usd || ''}
+                    onChange={(e) => setExtraction({
+                      ...extraction,
+                      total_usd: e.target.value === '' ? null : parseFloat(e.target.value) || 0,
                     })}
                   />
                 </div>

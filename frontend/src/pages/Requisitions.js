@@ -4,12 +4,21 @@ import {
   FiChevronRight, FiChevronDown, FiEye, FiTrash2,
   FiDownload, FiFolder, FiCalendar, FiTag, FiUser,
 } from 'react-icons/fi';
-import { getFolderView, deleteRequisition, API_BASE_URL } from '../services/api';
+import {
+  getFolderView,
+  deleteRequisition,
+  downloadMonthlyPRSummary,
+  API_BASE_URL,
+} from '../services/api';
 
 function Requisitions() {
   const [tree, setTree] = useState({});
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState({});
+  const [summaryMonth, setSummaryMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
   const navigate = useNavigate();
 
   const load = async () => {
@@ -38,6 +47,11 @@ function Requisitions() {
     window.open(`${API_BASE_URL}/api/requisitions/${id}/export/word`, '_blank');
   };
 
+  const handleDownloadSummary = () => {
+    const [y, m] = summaryMonth.split('-');
+    downloadMonthlyPRSummary(y, m);
+  };
+
   if (loading) {
     return (
       <div className="empty-state">
@@ -48,8 +62,25 @@ function Requisitions() {
 
   return (
     <div>
-      <div className="page-header mb-4">
+      <div className="page-header mb-4 d-flex justify-content-between align-items-center flex-wrap gap-3">
         <h1 className="page-title">Requisitions</h1>
+
+        <div className="d-flex align-items-center gap-2">
+          <input
+            type="month"
+            className="form-control"
+            style={{ width: 180 }}
+            value={summaryMonth}
+            onChange={(e) => setSummaryMonth(e.target.value)}
+          />
+          <button
+            className="btn btn-outline-primary d-flex align-items-center gap-2"
+            onClick={handleDownloadSummary}
+            title="Download monthly PR Summary Excel (one tab per PR)"
+          >
+            <FiDownload size={16} /> Download Summary
+          </button>
+        </div>
       </div>
 
       {Object.keys(tree).length === 0 && (

@@ -7,6 +7,7 @@ from datetime import datetime
 from uuid import UUID
 from .services.revenue_service import RevenueService
 from .services.invoice_generator import InvoiceGenerator
+from .services.pr_monthly_summary import build_monthly_pr_summary_workbook
 from .models import Income, IncomeLineItem
 import os
 
@@ -1838,34 +1839,54 @@ async def get_income_stats(year: str | None = None, db: Session = Depends(get_db
     by_company: dict = {}
     total_rm = 0.0
     total_hkd = 0.0
-    monthly_totals = {m: {"rm": 0.0, "hkd": 0.0} for m in months}
+    total_usd = 0.0
+    monthly_totals = {
+        m: {"rm": 0.0, "hkd": 0.0, "usd": 0.0} for m in months
+    }
 
     for r in rows:
         company = r.company_name or "Unknown"
         _, month = _split_period(r.period)
+
         by_company.setdefault(company, {
-            "total_rm": 0.0, "total_hkd": 0.0, "invoices": 0,
-            "monthly": {m: {"rm": 0.0, "hkd": 0.0} for m in months},
+            "total_rm": 0.0,
+            "total_hkd": 0.0,
+            "total_usd": 0.0,
+            "invoices": 0,
+            "monthly": {
+                m: {"rm": 0.0, "hkd": 0.0, "usd": 0.0} for m in months
+            },
         })
-        by_company[company]["total_rm"] += r.total_rm or 0
-        by_company[company]["total_hkd"] += r.total_hkd or 0
+
+        rm_val = float(r.total_rm or 0)
+        hkd_val = float(r.total_hkd or 0)
+        usd_val = float(r.total_usd or 0)
+
+        by_company[company]["total_rm"] += rm_val
+        by_company[company]["total_hkd"] += hkd_val
+        by_company[company]["total_usd"] += usd_val
         by_company[company]["invoices"] += 1
+
         if month in months:
-            by_company[company]["monthly"][month]["rm"] += r.total_rm or 0
-            by_company[company]["monthly"][month]["hkd"] += r.total_hkd or 0
-            monthly_totals[month]["rm"] += r.total_rm or 0
-            monthly_totals[month]["hkd"] += r.total_hkd or 0
-        total_rm += r.total_rm or 0
-        total_hkd += r.total_hkd or 0
+            by_company[company]["monthly"][month]["rm"] += rm_val
+            by_company[company]["monthly"][month]["hkd"] += hkd_val
+            by_company[company]["monthly"][month]["usd"] += usd_val
+            monthly_totals[month]["rm"] += rm_val
+            monthly_totals[month]["hkd"] += hkd_val
+            monthly_totals[month]["usd"] += usd_val
+
+        total_rm += rm_val
+        total_hkd += hkd_val
+        total_usd += usd_val
 
     return {
         "year": year,
         "total_rm": round(total_rm, 2),
         "total_hkd": round(total_hkd, 2),
+        "total_usd": round(total_usd, 2),
         "by_company": by_company,
         "monthly_totals": monthly_totals,
     }
-
 
 @app.get("/api/dashboard/monthly-report")
 async def monthly_report_excel(year: str | None = None, db: Session = Depends(get_db)):
@@ -2020,6 +2041,28 @@ async def monthly_report_excel(year: str | None = None, db: Session = Depends(ge
         filename=f"Monthly Report {year}.xlsx",
     )
 
+@app.get("/api/requisitions/monthly-summary")
+async def download_monthly_pr_summary(
+    year: str,
+    month: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Download a workbook with:
+      Sheet 1: PAYMENT REQUISITION SUMMARY-<DD.M.YYYY>
+      One tab per PR in that month
+      One detail-list tab per reimbursement PR
+    """
+    import tempfile
+
+    path = build_monthly_pr_summary_workbook(db, year, f"{int(month):02d}")
+
+    safe = f"HK PRs Summary_{year}{int(month):02d}.xlsx"
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=safe,
+    )
 
 # ============ HELPERS ============
 

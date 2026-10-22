@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  FiUploadCloud, FiEdit3, FiFolder, FiFileText, FiTag,
-  FiDownload, FiDollarSign,
+  FiFolder, FiTag, FiDownload, FiDollarSign,
 } from 'react-icons/fi';
 import {
   getDashboardStats,
@@ -10,19 +9,21 @@ import {
   downloadCompanyAnnualReport,
   downloadAllCompaniesAnnualReport,
   downloadMonthlyReport,
+  downloadMonthlyPRSummary,
 } from '../services/api';
 
 function Dashboard() {
   const [stats, setStats] = useState(null);
   const [incomeStats, setIncomeStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [prSummaryMonth, setPrSummaryMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
 
   useEffect(() => {
     const currentYear = new Date().getFullYear().toString();
-    Promise.all([
-      getDashboardStats(),
-      getIncomeStats(currentYear),
-    ])
+    Promise.all([getDashboardStats(), getIncomeStats(currentYear)])
       .then(([statsData, incStats]) => {
         setStats(statsData);
         setIncomeStats(incStats);
@@ -47,6 +48,7 @@ function Dashboard() {
 
   const totalIncomeRm = incomeStats?.total_rm || 0;
   const totalIncomeHkd = incomeStats?.total_hkd || 0;
+  const totalIncomeUsd = incomeStats?.total_usd || 0;
   const incomeByCompany = incomeStats?.by_company || {};
 
   const fmt = (n) =>
@@ -55,21 +57,44 @@ function Dashboard() {
       maximumFractionDigits: 2,
     });
 
+  const handleDownloadPrSummary = () => {
+    const [y, m] = prSummaryMonth.split('-');
+    downloadMonthlyPRSummary(y, m);
+  };
+
   return (
     <div>
-      {/* Header */}
-      <div className="page-header mb-4 d-flex justify-content-between align-items-start">
+      {/* ---------- Header ---------- */}
+      <div className="page-header mb-4 d-flex justify-content-between align-items-start flex-wrap gap-3">
         <div>
           <h1 className="page-title">Dashboard</h1>
-          <p className="page-subtitle">Overview of payment requisitions & revenue</p>
+          <p className="page-subtitle">Overview of payment requisitions &amp; revenue</p>
         </div>
-        <button
-          className="btn btn-sm btn-outline-success d-flex align-items-center gap-1"
-          onClick={() => downloadMonthlyReport(thisYear.label)}
-          title="Download Income vs Expenses Report"
-        >
-          <FiDownload size={14} /> Monthly Report
-        </button>
+
+        <div className="d-flex align-items-center gap-2 flex-wrap">
+          <input
+            type="month"
+            className="form-control form-control-sm"
+            style={{ width: 160 }}
+            value={prSummaryMonth}
+            onChange={(e) => setPrSummaryMonth(e.target.value)}
+            title="Month for PR Summary export"
+          />
+          <button
+            className="btn btn-sm btn-outline-primary d-flex align-items-center gap-1"
+            onClick={handleDownloadPrSummary}
+            title="Download PR Summary Excel (one tab per PR)"
+          >
+            <FiDownload size={14} /> PR Summary
+          </button>
+          <button
+            className="btn btn-sm btn-outline-success d-flex align-items-center gap-1"
+            onClick={() => downloadMonthlyReport(thisYear.label)}
+            title="Download Income vs Expenses Report"
+          >
+            <FiDownload size={14} /> Monthly Report
+          </button>
+        </div>
       </div>
 
       {/* ---------- Stat cards ---------- */}
@@ -94,9 +119,7 @@ function Dashboard() {
             <div className="stat-value success">HK${fmt(thisMonth.total)}</div>
           </div>
         </div>
-
       </div>
-
 
       {/* ================================================================ */}
       {/* INCOME SECTION                                                   */}
@@ -111,16 +134,22 @@ function Dashboard() {
           </div>
 
           <div className="row g-3 mb-3">
-            <div className="col-md-6">
+            <div className="col-lg-4 col-md-6">
               <div className="stat-card h-100" style={{ borderLeft: '4px solid var(--success)' }}>
                 <div className="stat-label">Total Income (RM)</div>
                 <div className="stat-value success">RM {fmt(totalIncomeRm)}</div>
               </div>
             </div>
-            <div className="col-md-6">
-              <div className="stat-card h-100" style={{ borderLeft: '4px solid var(--success)' }}>
-                <div className="stat-label">Total Income (HKD est.)</div>
+            <div className="col-lg-4 col-md-6">
+              <div className="stat-card h-100" style={{ borderLeft: '4px solid #6366f1' }}>
+                <div className="stat-label">Total Income (HKD)</div>
                 <div className="stat-value success">HK${fmt(totalIncomeHkd)}</div>
+              </div>
+            </div>
+            <div className="col-lg-4 col-md-6">
+              <div className="stat-card h-100" style={{ borderLeft: '4px solid #10b981' }}>
+                <div className="stat-label">Total Income (USD)</div>
+                <div className="stat-value success">US${fmt(totalIncomeUsd)}</div>
               </div>
             </div>
           </div>
@@ -144,8 +173,27 @@ function Dashboard() {
                     {data.invoices} invoice{data.invoices !== 1 ? 's' : ''}
                   </div>
                 </div>
-                <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>
-                  RM {fmt(data.total_rm)}
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-end',
+                    lineHeight: 1.2,
+                  }}
+                >
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>
+                    RM {fmt(data.total_rm)}
+                  </div>
+                  {data.total_hkd > 0 && (
+                    <div style={{ fontSize: '0.75rem', opacity: 0.85 }}>
+                      HK${fmt(data.total_hkd)}
+                    </div>
+                  )}
+                  {data.total_usd > 0 && (
+                    <div style={{ fontSize: '0.75rem', opacity: 0.85 }}>
+                      US${fmt(data.total_usd)}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -211,13 +259,7 @@ function Dashboard() {
                   >
                     {company}
                   </div>
-                  <div
-                    style={{
-                      fontSize: '0.75rem',
-                      opacity: 0.85,
-                      marginTop: 2,
-                    }}
-                  >
+                  <div style={{ fontSize: '0.75rem', opacity: 0.85, marginTop: 2 }}>
                     {data.count} requisition{data.count !== 1 ? 's' : ''} ·{' '}
                     {Object.keys(data.categories).length} categor
                     {Object.keys(data.categories).length !== 1 ? 'ies' : 'y'}
@@ -235,9 +277,7 @@ function Dashboard() {
                 {data.company_id && (
                   <button
                     className="btn btn-sm d-flex align-items-center gap-1"
-                    onClick={() =>
-                      downloadCompanyAnnualReport(data.company_id, thisYear.label)
-                    }
+                    onClick={() => downloadCompanyAnnualReport(data.company_id, thisYear.label)}
                     title={`Download ${company} annual report`}
                     style={{
                       background: 'rgba(255,255,255,0.15)',
@@ -254,8 +294,7 @@ function Dashboard() {
               {/* Categories list */}
               <div style={{ padding: '8px 0' }}>
                 {Object.entries(data.categories).map(([cat, catData], idx, arr) => {
-                  const pct =
-                    data.total > 0 ? (catData.total / data.total) * 100 : 0;
+                  const pct = data.total > 0 ? (catData.total / data.total) * 100 : 0;
                   const isLast = idx === arr.length - 1;
 
                   return (
@@ -263,9 +302,7 @@ function Dashboard() {
                       key={cat}
                       style={{
                         padding: '12px 20px',
-                        borderBottom: isLast
-                          ? 'none'
-                          : '1px solid var(--neutral-100)',
+                        borderBottom: isLast ? 'none' : '1px solid var(--neutral-100)',
                         display: 'flex',
                         alignItems: 'center',
                         gap: 16,
@@ -301,12 +338,7 @@ function Dashboard() {
                       </div>
 
                       <div
-                        style={{
-                          width: 100,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                        }}
+                        style={{ width: 100, display: 'flex', alignItems: 'center', gap: 8 }}
                         title={`${pct.toFixed(1)}% of company total`}
                       >
                         <div
