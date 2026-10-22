@@ -1,10 +1,3 @@
-"""
-Generate a monthly PR Summary workbook that mirrors the "HK PRs Summary" template:
-
-  Sheet 1             : PAYMENT REQUISITION SUMMARY-<DD.M.YYYY>
-  <SHORT>_<YEAR>_PR_N : one tab per requisition
-  <SHORT>_<YEAR>_RP_N_Detail List : detail-list tabs for reimbursements
-"""
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
@@ -19,30 +12,56 @@ from ..config import settings
 # ---------- styles ----------
 BOLD = Font(bold=True)
 ITALIC = Font(italic=True)
-HEADER_FILL = PatternFill("solid", fgColor="D9E1F2")
 TITLE_FONT = Font(bold=True, size=14)
-
-THIN = Side(style="thin", color="999999")
+HEADER_FONT = Font(bold=True, size=10)
+THIN = Side(style="thin", color="000000")
+MEDIUM = Side(style="medium", color="000000")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
-
+HEADER_BORDER = Border(left=MEDIUM, right=MEDIUM, top=MEDIUM, bottom=MEDIUM)
 RIGHT = Alignment(horizontal="right", vertical="center")
 CENTER = Alignment(horizontal="center", vertical="center")
 LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
+HEADER_FILL = PatternFill("solid", fgColor="D9E1F2")
 
+# "HK$" + standard two-decimal number format
+HK_MONEY_FMT = '"HK$"#,##0.00'
+HK_MONEY_FMT_NEG = '"HK$"-#,##0.00'
+
+
+# ---------- helpers ----------
 
 def _short_from_pr(pr_number: str) -> str:
-    """LSHK-PR-2026-041 → 'LSHK'; LSI-PR-2026-113 → 'LSI'."""
     parts = (pr_number or "").split("-")
     return parts[0].upper() if parts else "LSI"
 
 
 def _clean_pr_suffix(pr_number: str) -> str:
-    """LSHK-PR-2026-041 → '2026_PR_041' (used for the tab name)."""
     parts = (pr_number or "").split("-")
     if len(parts) >= 4:
         return f"{parts[2]}_{parts[3]}"
-    # fallback
     return (pr_number or "").replace("-", "_")
+
+
+def _fmt_date(d, fmt="%d/%m/%Y") -> str:
+    if not d:
+        return ""
+    if isinstance(d, str):
+        try:
+            d = datetime.strptime(d[:10], "%Y-%m-%d")
+        except ValueError:
+            return d
+    return d.strftime(fmt)
+
+
+def _money(cell, amount, bold=False):
+    """Write a numeric cell with money format; skip zero/None entirely."""
+    if amount in (None, 0, 0.0):
+        return
+    cell.value = float(amount)
+    cell.number_format = HK_MONEY_FMT
+    cell.alignment = RIGHT
+    if bold:
+        cell.font = BOLD
 
 
 # ============================================================
@@ -56,15 +75,7 @@ def _build_summary_sheet(wb, title_date: datetime, requisitions: List[Any]):
     ws["A1"].font = TITLE_FONT
     ws.merge_cells("A1:I1")
 
-    row = 2
-    ws.cell(row=row, column=2, value="SN.").font = BOLD
-    ws.cell(row=row, column=3, value="PR No.").font = BOLD
-    ws.cell(row=row, column=5, value="Paid Method").font = BOLD
-    ws.cell(row=row, column=6, value="Nature").font = BOLD
-    ws.cell(row=row, column=7, value="Name of Payee:").font = BOLD
-    ws.cell(row=row, column=8, value="Amount payable:").font = BOLD
-
-    # --- split into HK budget vs not-included ---
+    # Split HK vs non-HK (rows that don't belong to the HK budget)
     hk_items = []
     non_hk_items = []
     for r in requisitions:
@@ -74,82 +85,95 @@ def _build_summary_sheet(wb, title_date: datetime, requisitions: List[Any]):
         else:
             hk_items.append(r)
 
-    def _write_rows(items, start_row, sn_start=1, show_total=True):
-        r = start_row
+    header_labels = ["SN.", "PR No.", "", "Paid Method",
+                     "Nature", "Name of Payee:", "Amount payable:"]
+
+    def _header_row(row, labels=header_labels):
+        for i, label in enumerate(labels, start=1):
+            cell = ws.cell(row=row, column=1 + i, value=label)
+            cell.font = HEADER_FONT
+            cell.fill = HEADER_FILL
+            cell.alignment = CENTER
+            cell.border = HEADER_BORDER
+
+    def _write_block(items, start_row, sn_start):
+        row = start_row
         sn = sn_start
-        first_data_row = r
+        first_data = row
         for req in items:
-            ws.cell(row=r, column=2, value=sn)
-            ws.cell(row=r, column=3, value=req.pr_number)
-            ws.cell(row=r, column=4, value=_short_from_pr(req.pr_number))
-            ws.cell(row=r, column=5, value="Bank Transfer")
-            ws.cell(row=r, column=6, value=req.category_name or req.nature or "")
-            ws.cell(row=r, column=7, value=req.payee_name or "")
-            ws.cell(row=r, column=8, value=float(req.total_amount or 0)).number_format = "#,##0.00"
-            ws.cell(row=r, column=6).alignment = LEFT
-            ws.cell(row=r, column=7).alignment = LEFT
-            ws.cell(row=r, column=8).alignment = RIGHT
-            r += 1
+            ws.cell(row=row, column=2, value=sn).alignment = CENTER
+            ws.cell(row=row, column=3, value=req.pr_number).alignment = CENTER
+            ws.cell(row=row, column=4, value=_short_from_pr(req.pr_number)).alignment = CENTER
+            ws.cell(row=row, column=5, value="Bank Transfer").alignment = LEFT
+            ws.cell(row=row, column=6, value=req.category_name or req.nature or "").alignment = LEFT
+            ws.cell(row=row, column=7, value=req.payee_name or "").alignment = LEFT
+            _money(ws.cell(row=row, column=8), req.total_amount)
+
+            for col in range(2, 9):
+                ws.cell(row=row, column=col).border = BORDER
+
+            row += 1
             sn += 1
-        last_data_row = r - 1
-        if show_total and first_data_row <= last_data_row:
-            ws.cell(row=r, column=2, value="合计").font = BOLD
-            ws.cell(row=r, column=8, value=f"=SUM(H{first_data_row}:H{last_data_row})").font = BOLD
-            ws.cell(row=r, column=8).number_format = "#,##0.00"
-            r += 1
-        return r, sn, first_data_row, last_data_row
 
-    # HK block
-    row = 3
-    row, sn_next, hk_first, hk_last = _write_rows(hk_items, row, sn_start=1)
+        last_data = row - 1
 
-    # Separator
+        if first_data <= last_data:
+            ws.cell(row=row, column=2, value="合计").font = BOLD
+            total_cell = ws.cell(
+                row=row, column=8,
+                value=f"=SUM(H{first_data}:H{last_data})",
+            )
+            total_cell.number_format = HK_MONEY_FMT
+            total_cell.font = BOLD
+            total_cell.alignment = RIGHT
+            for col in range(2, 9):
+                ws.cell(row=row, column=col).border = BORDER
+            row += 1
+
+        return row, sn, first_data, last_data
+
+    # ---- HK block ----
+    row = 2
+    _header_row(row)
+    row += 1
+    row, sn_next, hk_first, hk_last = _write_block(hk_items, row, sn_start=1)
+    hk_total_row = hk_last + 1  # 合计 row
+
+    # ---- Divider line ----
     row += 1
     ws.cell(
-        row=row,
-        column=1,
+        row=row, column=1,
         value="The following items will not be included in the Hong Kong budget.",
     ).font = ITALIC
     row += 1
 
-    # Header again
-    ws.cell(row=row, column=2, value="SN.").font = BOLD
-    ws.cell(row=row, column=3, value="PR No.").font = BOLD
-    ws.cell(row=row, column=5, value="Petty Method").font = BOLD
-    ws.cell(row=row, column=6, value="Nature").font = BOLD
-    ws.cell(row=row, column=7, value="Name of Payee:").font = BOLD
-    ws.cell(row=row, column=8, value="Amount payable:").font = BOLD
+    # ---- Non-HK header ----
+    _header_row(row, labels=["SN.", "PR No.", "", "Petty Method",
+                             "Nature", "Name of Payee:", "Amount payable:"])
     row += 1
 
-    row, sn_next, non_hk_first, non_hk_last = _write_rows(
+    # ---- Non-HK block ----
+    row, sn_next, nonhk_first, nonhk_last = _write_block(
         non_hk_items, row, sn_start=sn_next
     )
+    nonhk_total_row = nonhk_last + 1
 
-    # Sub-total
+    # ---- Sub Total ----
     row += 1
     ws.cell(row=row, column=7, value="Sub Total").font = BOLD
-    ws.cell(
-        row=row,
-        column=8,
-        value=f"=H{hk_first + len(hk_items) if False else hk_last}+H{non_hk_last}"
-        if hk_items and non_hk_items
-        else f"=H{hk_last if hk_items else non_hk_last}",
-    )
+    ws.cell(row=row, column=7).alignment = RIGHT
 
-    # Safer: recompute subtotal using explicit SUM ranges
-    total_row = row
     formula_parts = []
     if hk_items:
-        total_row_hk = hk_last + 1  # the "合计" row
-        formula_parts.append(f"H{total_row_hk}")
+        formula_parts.append(f"H{hk_total_row}")
     if non_hk_items:
-        # find the non-hk 合计 row
-        # we know it's just after non_hk_last + 1
-        formula_parts.append(f"H{non_hk_last + 1}")
+        formula_parts.append(f"H{nonhk_total_row}")
+    sub_expr = "=" + "+".join(formula_parts) if formula_parts else 0
 
-    ws.cell(row=total_row, column=8, value="=" + "+".join(formula_parts) if formula_parts else 0)
-    ws.cell(row=total_row, column=8).font = BOLD
-    ws.cell(row=total_row, column=8).number_format = "#,##0.00"
+    st_cell = ws.cell(row=row, column=8, value=sub_expr)
+    st_cell.number_format = HK_MONEY_FMT
+    st_cell.font = BOLD
+    st_cell.alignment = RIGHT
 
     # Column widths
     widths = {"A": 22, "B": 6, "C": 20, "D": 8, "E": 16, "F": 42, "G": 42, "H": 16, "I": 6}
@@ -158,82 +182,150 @@ def _build_summary_sheet(wb, title_date: datetime, requisitions: List[Any]):
 
 
 # ============================================================
-# SHEET 2..N — ONE PER REQUISITION
+# ONE SHEET PER REQUISITION
 # ============================================================
 
-def _build_requisition_sheet(wb, req, line_items: List[Any], applicant: str, company_name: str):
+def _build_requisition_sheet(wb, req, line_items: List[Any], applicant: str):
     short = _short_from_pr(req.pr_number)
     tab = f"{short}_{_clean_pr_suffix(req.pr_number)}"
     ws = wb.create_sheet(title=tab[:31])
 
-    ws["B3"] = "PAYMENT REQUISITION"
-    ws["B3"].font = TITLE_FONT
-    ws.merge_cells("B3:J3")
+    # Title
+    ws["B2"] = "PAYMENT REQUISITION"
+    ws["B2"].font = TITLE_FONT
+    ws["B2"].alignment = CENTER
+    ws.merge_cells("B2:J2")
 
-    ws["B5"] = "PR No.:"
-    ws["B5"].font = BOLD
-    ws["D5"] = req.pr_number
+    # ----- Header table with merged cells (5 rows × 2 cols) -----
+    header_fields = [
+        ("PR No.:",         req.pr_number or ""),
+        ("Applicant:",      applicant or "Juliana"),
+        ("Nature:",         req.category_name or req.nature or ""),
+        ("Period:",         req.period or ""),
+        ("Name of Payee:",  req.payee_name or ""),
+        ("Amount payable:", float(req.total_amount or 0)),
+    ]
 
-    ws["B6"] = "Applicant:"
-    ws["B6"].font = BOLD
-    ws["D6"] = applicant or "Juliana"
+    header_start_row = 4
+    for idx, (label, value) in enumerate(header_fields):
+        r = header_start_row + idx
+        lc = ws.cell(row=r, column=2, value=label)
+        lc.font = BOLD
+        lc.alignment = LEFT
+        lc.border = BORDER
+        # merge label across B:C so the label has room
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
 
-    ws["B7"] = "Nature:"
-    ws["B7"].font = BOLD
-    ws["D7"] = req.category_name or req.nature or ""
+        vc = ws.cell(row=r, column=4, value=value)
+        vc.alignment = LEFT
+        vc.border = BORDER
+        # merge value across D:J
+        ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=10)
 
-    ws["B10"] = "Name of Payee:"
-    ws["B10"].font = BOLD
-    ws["D10"] = req.payee_name or ""
+        if isinstance(value, (int, float)):
+            vc.number_format = HK_MONEY_FMT
+            vc.alignment = RIGHT
 
-    ws["B11"] = "Amount payable:"
-    ws["B11"].font = BOLD
-    ws["D11"] = float(req.total_amount or 0)
-    ws["D11"].number_format = "#,##0.00"
+    # ----- Line items table -----
+    # Columns: B=Date, C=Particular, D=F=HK$, G-I=Rate, J=US$
+    table_start = header_start_row + len(header_fields) + 2  # leave one blank row
 
-    # Table header (matches template)
-    ws["E14"] = "Expenses in"
-    ws["G14"] = "Exch"
-    ws["B15"] = "Date"
-    ws["D15"] = "Particular"
-    ws["F15"] = "HK$"
-    ws["H15"] = "Rate"
-    ws["J15"] = "US$"
-    for cell in ["B15", "D15", "F15", "H15", "J15"]:
-        ws[cell].font = BOLD
+    headers = ["Date", "Particular", "", "", "HK$", "", "", "Rate", "", "US$"]
+    # merge header row so "Particular" spans C:D, "HK$" spans E:F, "Rate" spans G:H
+    hr = table_start
+    for idx, text in enumerate(headers, start=2):
+        c = ws.cell(row=hr, column=idx, value=text or None)
+        c.font = HEADER_FONT
+        c.fill = HEADER_FILL
+        c.alignment = CENTER
+        c.border = HEADER_BORDER
+    # merge
+    ws.merge_cells(start_row=hr, start_column=3, end_row=hr, end_column=4)  # Particular
+    ws.merge_cells(start_row=hr, start_column=5, end_row=hr, end_column=6)  # HK$
+    ws.merge_cells(start_row=hr, start_column=8, end_row=hr, end_column=9)  # Rate
+    ws.cell(row=hr, column=3, value="Particular")
+    ws.cell(row=hr, column=5, value="Expenses in HK$")
+    ws.cell(row=hr, column=8, value="Exch Rate")
 
-    # Line items
-    r = 16
-    for li in line_items:
-        d = li.date.strftime("%Y-%m-%d 00:00:00") if li.date else ""
-        ws.cell(row=r, column=2, value=d)
-        ws.cell(row=r, column=4, value=li.description or "")
-        ws.cell(row=r, column=6, value=float(li.amount_hkd or 0)).number_format = "#,##0.00"
-        r += 1
-        if r > 23:
-            break
+    # Rows
+    r = hr + 1
+    nature_lc = (req.category_name or req.nature or "").lower()
+    is_reimbursement = "reimburse" in nature_lc
+    data_start = r
 
-    # Sum row (matches =SUM(F14:F21) style)
-    ws.cell(row=24, column=6, value=f"=SUM(F16:F23)").font = BOLD
-    ws.cell(row=24, column=6).number_format = "#,##0.00"
+    if is_reimbursement:
+        groups: Dict[str, float] = {}
+        for li in line_items:
+            cat = (li.category or "Miscellaneous").strip() or "Miscellaneous"
+            groups[cat] = groups.get(cat, 0.0) + float(li.amount_hkd or 0)
 
-    ws["D26"] = "Cheque No."
-    ws["D26"].font = BOLD
-    ws["F26"] = "-"
+        period_label = (req.period or "")[:7]
+        for cat, total in groups.items():
+            ws.cell(row=r, column=2, value=period_label).alignment = CENTER
+            ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
+            ws.cell(row=r, column=3, value=cat).alignment = LEFT
+            ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=6)
+            _money(ws.cell(row=r, column=5), total)
+            ws.merge_cells(start_row=r, start_column=8, end_row=r, end_column=9)
+            ws.merge_cells(start_row=r, start_column=10, end_row=r, end_column=10)
 
-    ws["B30"] = "Juliana"
-    ws["B31"] = "=D6"
+            for col in range(2, 11):
+                ws.cell(row=r, column=col).border = BORDER
+            r += 1
+            if r > data_start + 15:
+                break
+    else:
+        for li in line_items:
+            ws.cell(row=r, column=2, value=_fmt_date(li.date)).alignment = CENTER
+            ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
+            ws.cell(row=r, column=3, value=li.description or "").alignment = LEFT
+            ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=6)
+            _money(ws.cell(row=r, column=5), float(li.amount_hkd or 0))
+            ws.merge_cells(start_row=r, start_column=8, end_row=r, end_column=9)
+            for col in range(2, 11):
+                ws.cell(row=r, column=col).border = BORDER
+            r += 1
+            if r > data_start + 15:
+                break
 
-    ws["B35"] = "Approved by:"
-    ws["B35"].font = BOLD
+    # Sub-total row
+    r_total = r + 1
+    ws.merge_cells(start_row=r_total, start_column=2, end_row=r_total, end_column=6)
+    ws.cell(row=r_total, column=2, value="Sub Total").font = BOLD
+    ws.cell(row=r_total, column=2).alignment = RIGHT
+    ws.merge_cells(start_row=r_total, start_column=7, end_row=r_total, end_column=7)
+    total_cell = ws.cell(row=r_total, column=7, value=f"=SUM(E{data_start}:E{r-1})")
+    total_cell.number_format = HK_MONEY_FMT
+    total_cell.font = BOLD
+    total_cell.alignment = RIGHT
+    for col in range(2, 11):
+        ws.cell(row=r_total, column=col).border = BORDER
 
-    widths = {"A": 3, "B": 14, "C": 6, "D": 40, "E": 8, "F": 14, "G": 8, "H": 10, "I": 4, "J": 12}
+    # Cheque No.
+    cr = r_total + 2
+    ws.merge_cells(start_row=cr, start_column=2, end_row=cr, end_column=3)
+    ws.cell(row=cr, column=2, value="Cheque No.").font = BOLD
+    ws.cell(row=cr, column=2).alignment = LEFT
+    ws.merge_cells(start_row=cr, start_column=4, end_row=cr, end_column=5)
+    ws.cell(row=cr, column=4, value="-")
+
+    # Signature block
+    sig_row = cr + 3
+    ws.cell(row=sig_row, column=2, value="Juliana").font = ITALIC
+    ws.cell(row=sig_row + 1, column=2, value="_________________________")
+    ws.cell(row=sig_row + 2, column=2, value="Authorized Signature")
+    ws.cell(row=sig_row + 5, column=2, value="Approved by:").font = BOLD
+    ws.cell(row=sig_row + 6, column=2, value="_________________________")
+
+    # Widths
+    widths = {"A": 3, "B": 14, "C": 20, "D": 20, "E": 15, "F": 8,
+              "G": 8, "H": 10, "I": 10, "J": 12}
     for col, w in widths.items():
         ws.column_dimensions[col].width = w
 
 
 # ============================================================
-# DETAIL LIST SHEET — reimbursement breakdown
+# DETAIL LIST (one per reimbursement)
 # ============================================================
 
 def _build_detail_sheet(wb, req, line_items: List[Any], applicant: str):
@@ -241,60 +333,86 @@ def _build_detail_sheet(wb, req, line_items: List[Any], applicant: str):
     base = f"{short}_{_clean_pr_suffix(req.pr_number)}_Detail List"
     ws = wb.create_sheet(title=base[:31])
 
-    header_title = f"{applicant or 'Mr'} Reimbursement - {(req.period or '').strip()}"
-    ws["A1"] = header_title
+    title_name = applicant or req.payee_name or "Mr"
+    ws["A1"] = f"{title_name} Reimbursement - {(req.period or '').strip()}"
     ws["A1"].font = TITLE_FONT
+    ws.merge_cells("A1:L1")
 
-    ws["B3"] = "Item"
-    ws["C3"] = "No."
-    ws["D3"] = "Date"
-    ws["E3"] = "Description"
-    ws["H3"] = "RMB"
-    ws["I3"] = "HKD"
-    ws["J3"] = "RMB"
-    ws["K3"] = "HKD"
-    ws["L3"] = "HKD"
-    for cell in ["B3","C3","D3","E3","H3","I3","J3","K3","L3"]:
-        ws[cell].font = BOLD
+    headers = ["", "Item", "No.", "Date", "Description",
+               "RMB", "HKD", "RMB", "HKD", "HKD"]
+    hr = 3
+    for idx, text in enumerate(headers, start=1):
+        c = ws.cell(row=hr, column=idx, value=text or None)
+        c.font = HEADER_FONT
+        c.fill = HEADER_FILL
+        c.alignment = CENTER
+        c.border = HEADER_BORDER
+    # merge the RMB/HKD group under H and I
+    ws.merge_cells(start_row=hr, start_column=6, end_row=hr, end_column=6)
+    ws.merge_cells(start_row=hr, start_column=7, end_row=hr, end_column=7)
+    ws.merge_cells(start_row=hr, start_column=8, end_row=hr, end_column=9)
+    ws.merge_cells(start_row=hr, start_column=10, end_row=hr, end_column=10)
+    ws.merge_cells(start_row=hr, start_column=11, end_row=hr, end_column=11)
+    ws.merge_cells(start_row=hr, start_column=12, end_row=hr, end_column=12)
 
-    # Group line items by category
     groups: Dict[str, List[Any]] = {}
     for li in line_items:
         cat = (li.category or "Miscellaneous").strip() or "Miscellaneous"
         groups.setdefault(cat, []).append(li)
 
-    r = 4
-    cat_start_rows = {}
+    r = hr + 1
     for cat, items in groups.items():
-        cat_start_rows[cat] = r
+        cat_start = r
         for idx, li in enumerate(items):
             if idx == 0:
                 ws.cell(row=r, column=2, value=cat).font = BOLD
-            ws.cell(row=r, column=3, value=f"=ROW()-3")
-            if li.date:
-                ws.cell(row=r, column=4, value=li.date)
-                ws.cell(row=r, column=4).number_format = "yyyy-mm-dd hh:mm:ss"
-            ws.cell(row=r, column=5, value=li.description or "")
-            ws.cell(row=r, column=5).alignment = LEFT
-            ws.cell(row=r, column=9, value=float(li.amount_hkd or 0)).number_format = "#,##0.00"
+                ws.cell(row=r, column=2).alignment = LEFT
+            ws.cell(row=r, column=3, value=f"=ROW()-{hr}").alignment = CENTER
+            ws.cell(row=r, column=4, value=_fmt_date(li.date)).alignment = CENTER
+            ws.cell(row=r, column=5, value=li.description or "").alignment = LEFT
+            _money(ws.cell(row=r, column=9), float(li.amount_hkd or 0))
+
+            for col in range(2, 13):
+                ws.cell(row=r, column=col).border = BORDER
             r += 1
 
-    # Totals
-    total_row = r + 1
-    ws.cell(row=total_row, column=9, value=f"=SUM(I4:I{r-1})").font = BOLD
-    ws.cell(row=total_row, column=9).number_format = "#,##0.00"
+        # Category subtotal in L
+        ws.cell(row=cat_start, column=12,
+                value=f"=SUM(I{cat_start}:I{r-1})").number_format = HK_MONEY_FMT
+        ws.cell(row=cat_start, column=12).font = BOLD
+        ws.cell(row=cat_start, column=12).alignment = RIGHT
 
-    # Sub-total row
-    ws.cell(row=total_row + 2, column=5, value="HKD sub-total").font = BOLD
-    ws.cell(row=total_row + 2, column=9, value=f"=SUM(I4:I{r-1})").font = BOLD
-    ws.cell(row=total_row + 2, column=9).number_format = "#,##0.00"
+    # Grand totals
+    tr = r + 1
+    ws.merge_cells(start_row=tr, start_column=6, end_row=tr, end_column=8)
+    ws.cell(row=tr, column=6, value="Sub Total").font = BOLD
+    ws.cell(row=tr, column=6).alignment = RIGHT
+    ws.cell(row=tr, column=9, value=f"=SUM(I{hr+1}:I{r-1})").number_format = HK_MONEY_FMT
+    ws.cell(row=tr, column=9).font = BOLD
+    ws.cell(row=tr, column=9).alignment = RIGHT
+    ws.cell(row=tr, column=12, value=f"=SUM(L{hr+1}:L{r-1})").number_format = HK_MONEY_FMT
+    ws.cell(row=tr, column=12).font = BOLD
+    ws.cell(row=tr, column=12).alignment = RIGHT
+    for col in range(2, 13):
+        ws.cell(row=tr, column=col).border = BORDER
 
-    # Grand total
-    ws.cell(row=total_row + 4, column=5, value="Total").font = BOLD
-    ws.cell(row=total_row + 4, column=8, value=f"=H{total_row+2}+I{total_row+2}").font = BOLD
-    ws.cell(row=total_row + 4, column=8).number_format = "#,##0.00"
+    ws.merge_cells(start_row=tr + 2, start_column=5, end_row=tr + 2, end_column=8)
+    ws.cell(row=tr + 2, column=5, value="HKD sub-total").font = BOLD
+    ws.cell(row=tr + 2, column=5).alignment = RIGHT
+    ws.cell(row=tr + 2, column=9, value=f"=SUM(I{hr+1}:I{r-1})").number_format = HK_MONEY_FMT
+    ws.cell(row=tr + 2, column=9).font = BOLD
+    ws.cell(row=tr + 2, column=9).alignment = RIGHT
 
-    widths = {"A": 3, "B": 32, "C": 6, "D": 20, "E": 60, "F": 3, "G": 3, "H": 10, "I": 10, "J": 10, "K": 10, "L": 10, "M": 4}
+    ws.merge_cells(start_row=tr + 4, start_column=5, end_row=tr + 4, end_column=7)
+    ws.cell(row=tr + 4, column=5, value="Total").font = BOLD
+    ws.cell(row=tr + 4, column=5).alignment = RIGHT
+    ws.cell(row=tr + 4, column=8,
+            value=f"=H{tr+2}+I{tr+2}").number_format = HK_MONEY_FMT
+    ws.cell(row=tr + 4, column=8).font = BOLD
+    ws.cell(row=tr + 4, column=8).alignment = RIGHT
+
+    widths = {"A": 3, "B": 32, "C": 6, "D": 14, "E": 60, "F": 6, "G": 6,
+              "H": 10, "I": 12, "J": 10, "K": 12, "L": 14}
     for col, w in widths.items():
         ws.column_dimensions[col].width = w
 
@@ -304,12 +422,9 @@ def _build_detail_sheet(wb, req, line_items: List[Any], applicant: str):
 # ============================================================
 
 def build_monthly_pr_summary_workbook(db, year: str, month: str) -> str:
-    """
-    `db` is an SQLAlchemy Session. Returns the path to the generated .xlsx.
-    """
-    from ..models import Requisition, LineItem  # avoid circular import
+    from ..models import Requisition, LineItem
 
-    period = f"{year}-{month:0>2}"
+    period = f"{year}-{str(month).zfill(2)}"
     rows = (
         db.query(Requisition)
         .filter(Requisition.period == period)
@@ -318,7 +433,6 @@ def build_monthly_pr_summary_workbook(db, year: str, month: str) -> str:
     )
 
     wb = openpyxl.Workbook()
-    # remove default sheet later; we build our own
     wb.remove(wb.active)
 
     title_date = datetime.utcnow()
@@ -331,16 +445,15 @@ def build_monthly_pr_summary_workbook(db, year: str, month: str) -> str:
             .order_by(LineItem.item_number)
             .all()
         )
-        _build_requisition_sheet(wb, req, line_items, req.applicant, req.company_name)
+        _build_requisition_sheet(wb, req, line_items, req.applicant)
 
-        # Only emit a Detail List tab for reimbursements
         nature = (req.category_name or req.nature or "").lower()
-        if "reimburse" in nature or "reimbursment" in nature:
+        if "reimburse" in nature:
             _build_detail_sheet(wb, req, line_items, req.applicant or req.payee_name)
 
     out_dir = Path(settings.OUTPUT_DIR)
     out_dir.mkdir(parents=True, exist_ok=True)
-    fname = f"HK PRs Summary_{year}{month:0>2}{title_date.strftime('%d')}.xlsx"
+    fname = f"HK PRs Summary_{year}{str(month).zfill(2)}.xlsx"
     path = out_dir / fname
     wb.save(path)
     return str(path)
