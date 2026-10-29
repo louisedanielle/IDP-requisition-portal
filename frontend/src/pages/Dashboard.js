@@ -8,7 +8,6 @@ import {
   getIncomeStats,
   downloadCompanyAnnualReport,
   downloadAllCompaniesAnnualReport,
-  downloadMonthlyReport,
   downloadMonthlyPRSummary,
 } from '../services/api';
 
@@ -83,16 +82,9 @@ function Dashboard() {
           <button
             className="btn btn-sm btn-outline-primary d-flex align-items-center gap-1"
             onClick={handleDownloadPrSummary}
-            title="Download PR Summary Excel (one tab per PR)"
+            title="Download PR Summary Excel"
           >
             <FiDownload size={14} /> PR Summary
-          </button>
-          <button
-            className="btn btn-sm btn-outline-success d-flex align-items-center gap-1"
-            onClick={() => downloadMonthlyReport(thisYear.label)}
-            title="Download Income vs Expenses Report"
-          >
-            <FiDownload size={14} /> Monthly Report
           </button>
         </div>
       </div>

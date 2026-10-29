@@ -22,8 +22,12 @@ export default function Invoices() {
 
   useEffect(() => { load(); }, []);
 
-  const isOpen = (key, defaultOpen = false) =>
-    open[key] === undefined ? defaultOpen : open[key];
+  const isOpen = (key, defaultOpen = true) => {
+    if (defaultOpen === true && key.includes('::month::')) {
+      return open[key] === true;
+    }
+    return open[key] === undefined ? defaultOpen : open[key];
+  };
 
   const toggle = (key) => setOpen((prev) => ({ ...prev, [key]: !isOpen(key) }));
 
@@ -103,7 +107,7 @@ export default function Invoices() {
                         <div style={{ marginLeft: 16, marginTop: 8 }}>
                           {Object.entries(months).map(([month, customers]) => {
                             const mKey = `${yKey}::month::${month}`;
-                            const mOpen = isOpen(mKey, true);
+                            const mOpen = isOpen(mKey, false);
                             return (
                               <div key={mKey} style={{ marginBottom: 12 }}>
                                 <div
@@ -118,7 +122,7 @@ export default function Invoices() {
                                   <div style={{ marginLeft: 16, marginTop: 6 }}>
                                     {Object.entries(customers).map(([customer, invs]) => {
                                       const cuKey = `${mKey}::customer::${customer}`;
-                                      const cuOpen = isOpen(cuKey, true);
+                                      const cuOpen = isOpen(cuKey, false);
                                       return (
                                         <div key={cuKey} style={{ marginBottom: 10 }}>
                                           <div

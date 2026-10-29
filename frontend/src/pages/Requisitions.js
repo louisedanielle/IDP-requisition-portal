@@ -32,8 +32,12 @@ function Requisitions() {
 
   useEffect(() => { load(); }, []);
 
-  const isOpen = (key, defaultOpen = false) =>
-    open[key] === undefined ? defaultOpen : open[key];
+  const isOpen = (key, defaultOpen = true) => {
+    if (defaultOpen === true && key.includes('::month::')) {
+      return open[key] === true;  
+    }
+    return open[key] === undefined ? defaultOpen : open[key];
+  };
 
   const toggle = (key) => setOpen((prev) => ({ ...prev, [key]: !isOpen(key) }));
 
@@ -143,7 +147,7 @@ function Requisitions() {
                         <div style={{ marginLeft: 16, marginTop: 8 }}>
                           {Object.entries(months).map(([month, categories]) => {
                             const mKey = `${yKey}::month::${month}`;
-                            const mOpen = isOpen(mKey, true);
+                            const mOpen = isOpen(mKey, false);
                             return (
                               <div key={mKey} style={{ marginBottom: 12 }}>
                                 <div
@@ -165,7 +169,7 @@ function Requisitions() {
                                   <div style={{ marginLeft: 16, marginTop: 6 }}>
                                     {Object.entries(categories).map(([category, payees]) => {
                                       const catKey = `${mKey}::cat::${category}`;
-                                      const catOpen = isOpen(catKey, true);
+                                      const catOpen = isOpen(catKey, false);
                                       return (
                                         <div key={catKey} style={{ marginBottom: 12 }}>
                                           <div

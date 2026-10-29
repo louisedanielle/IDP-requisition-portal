@@ -106,10 +106,6 @@ export const getIncomeStats = async (year) => {
   return data;
 };
 
-export const downloadMonthlyReport = (year) => {
-  window.open(`${API_URL}/api/dashboard/monthly-report?year=${year}`, '_blank');
-};
-
 // ---------- Requisitions ----------
 export const listRequisitions = async (params = {}) => {
   const { data } = await api.get('/api/requisitions', { params });

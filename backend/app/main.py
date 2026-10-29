@@ -780,113 +780,23 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
 
 # ============ ANNUAL REPORT EXCEL ============
 
-def _build_annual_report_sheet(wb, company_name: str, year: str, requisitions: list):
-    import openpyxl
-    from openpyxl.styles import Font, Border, Side, Alignment
+from .services.annual_report import build_company_annual_sheet
 
-    sheet_name = (company_name[:28] + "..") if len(company_name) > 31 else company_name
-    ws = wb.create_sheet(title=sheet_name)
 
-    thin = Side(style="thin", color="CCCCCC")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    bold = Font(bold=True)
-    right = Alignment(horizontal="right")
-    center = Alignment(horizontal="center")
-
-    months = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ]
-
-    ws.merge_cells("A1:N1")
-    ws["A1"] = f"{company_name} — Annual Report {year}"
-    ws["A1"].font = Font(bold=True, size=14)
-
-    header_row = 3
-    ws.cell(row=header_row, column=1, value="Category").font = bold
-    for i, m in enumerate(months):
-        c = ws.cell(row=header_row, column=2 + i, value=m)
-        c.font = bold
-        c.alignment = center
-    total_col = 2 + len(months)
-    ws.cell(row=header_row, column=total_col, value="Total").font = bold
-    ws.cell(row=header_row, column=total_col).alignment = center
-
-    grid: dict = {}
-    unknown_month: dict = {}
-
-    for r in requisitions:
-        category = r.category_name or "Uncategorized"
-        amount = float(r.total_amount or 0)
-
-        _, month = _split_period(r.period)
-        if month == "—" or not month.isdigit():
-            unknown_month[category] = unknown_month.get(category, 0) + amount
-            continue
-
-        m_idx = int(month) - 1
-        if m_idx < 0 or m_idx > 11:
-            unknown_month[category] = unknown_month.get(category, 0) + amount
-            continue
-
-        grid.setdefault(category, [0.0] * 12)
-        grid[category][m_idx] += amount
-
-    row = header_row + 1
-    for category in sorted(grid.keys()):
-        ws.cell(row=row, column=1, value=category)
-        amounts = grid[category]
-        for i, amt in enumerate(amounts):
-            cell = ws.cell(row=row, column=2 + i, value=round(amt, 2))
-            cell.number_format = "#,##0.00"
-            cell.alignment = right
-        total_cell = ws.cell(
-            row=row,
-            column=total_col,
-            value=f"=SUM(B{row}:M{row})",
-        )
-        total_cell.font = bold
-        total_cell.number_format = "#,##0.00"
-        total_cell.alignment = right
-        row += 1
-
-    if unknown_month:
-        row += 1
-        ws.cell(row=row, column=1, value="Items with no month").font = Font(italic=True)
-        row += 1
-        for category, amt in sorted(unknown_month.items()):
-            ws.cell(row=row, column=1, value=category)
-            ws.cell(row=row, column=total_col, value=round(amt, 2)).number_format = "#,##0.00"
-            row += 1
-
-    total_row = row + 1
-    ws.cell(row=total_row, column=1, value="Total").font = bold
-    for i in range(2, 2 + len(months)):
-        col_letter = openpyxl.utils.get_column_letter(i)
-        c = ws.cell(
-            row=total_row,
-            column=i,
-            value=f"=SUM({col_letter}{header_row + 1}:{col_letter}{row})",
-        )
-        c.font = bold
-        c.number_format = "#,##0.00"
-        c.alignment = right
-    grand_total = ws.cell(
-        row=total_row,
-        column=total_col,
-        value=f"=SUM(N{header_row + 1}:N{row})",
+def _load_lines_by_req(db, requisitions) -> dict:
+    """Preload line items for every requisition in one query."""
+    req_ids = [r.id for r in requisitions]
+    if not req_ids:
+        return {}
+    lines = (
+        db.query(LineItem)
+        .filter(LineItem.requisition_id.in_(req_ids))
+        .all()
     )
-    grand_total.font = bold
-    grand_total.number_format = "#,##0.00"
-    grand_total.alignment = right
-
-    ws.column_dimensions["A"].width = 32
-    for i in range(2, 2 + len(months) + 1):
-        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = 12
-
-    for r in range(header_row, total_row + 1):
-        for c in range(1, total_col + 1):
-            ws.cell(row=r, column=c).border = border
+    grouped: dict = {}
+    for li in lines:
+        grouped.setdefault(str(li.requisition_id), []).append(li)
+    return grouped
 
 
 @app.get("/api/companies/{company_id}/annual-report")
@@ -913,10 +823,11 @@ async def company_annual_report(
         .order_by(Requisition.created_date.asc())
         .all()
     )
+    lines_by_req = _load_lines_by_req(db, rows)
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
-    _build_annual_report_sheet(wb, company.name, year, rows)
+    build_company_annual_sheet(wb, company.name, year, rows, lines_by_req)
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     tmp.close()
@@ -941,7 +852,8 @@ async def dashboard_annual_report(
 ):
     import openpyxl
     import tempfile
-    from openpyxl.styles import Font, Border, Side, Alignment
+    from openpyxl.styles import Font, Border, Side, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
 
     year = (year or datetime.utcnow().strftime("%Y")).strip()
 
@@ -956,32 +868,42 @@ async def dashboard_annual_report(
     summary = wb.active
     summary.title = f"Summary {year}"
 
-    thin = Side(style="thin", color="CCCCCC")
+    # ----- styles -----
+    thin = Side(style="thin", color="BFBFBF")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill("solid", fgColor="1A4D8F")
+    header_font = Font(bold=True, size=10, color="FFFFFF")
     bold = Font(bold=True)
-    right = Alignment(horizontal="right")
-    center = Alignment(horizontal="center")
+    right = Alignment(horizontal="right", vertical="center")
+    center = Alignment(horizontal="center", vertical="center")
+    left = Alignment(horizontal="left", vertical="center")
 
-    months = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ]
+    months = ["Jan","Feb","Mar","Apr","May","Jun",
+              "Jul","Aug","Sep","Oct","Nov","Dec"]
 
     summary.merge_cells("A1:N1")
     summary["A1"] = f"All Companies — Annual Report {year}"
     summary["A1"].font = Font(bold=True, size=14)
+    summary["A1"].alignment = left
 
     header_row = 3
-    summary.cell(row=header_row, column=1, value="Company").font = bold
+    summary.cell(row=header_row, column=1, value="Company")
     for i, m in enumerate(months):
-        c = summary.cell(row=header_row, column=2 + i, value=m)
-        c.font = bold
-        c.alignment = center
+        summary.cell(row=header_row, column=2 + i, value=m)
     total_col = 2 + len(months)
-    summary.cell(row=header_row, column=total_col, value="Total").font = bold
-    summary.cell(row=header_row, column=total_col).alignment = center
+    summary.cell(row=header_row, column=total_col, value="Total")
+
+    for col in range(1, total_col + 1):
+        c = summary.cell(row=header_row, column=col)
+        c.font = header_font
+        c.fill = header_fill
+        c.alignment = center
+        c.border = border
+    summary.row_dimensions[header_row].height = 24
 
     row = header_row + 1
+    grand_totals = [0.0] * 12
+
     for company in companies:
         rows = (
             db.query(Requisition)
@@ -991,9 +913,10 @@ async def dashboard_annual_report(
             )
             .all()
         )
+        lines_by_req = _load_lines_by_req(db, rows)
 
         if rows:
-            _build_annual_report_sheet(wb, company.name, year, rows)
+            build_company_annual_sheet(wb, company.name, year, rows, lines_by_req)
 
         amounts = [0.0] * 12
         for r in rows:
@@ -1003,46 +926,46 @@ async def dashboard_annual_report(
             m_idx = int(month) - 1
             if 0 <= m_idx < 12:
                 amounts[m_idx] += float(r.total_amount or 0)
+                grand_totals[m_idx] += float(r.total_amount or 0)
 
-        summary.cell(row=row, column=1, value=company.name)
+        summary.cell(row=row, column=1, value=company.name).alignment = left
         for i, amt in enumerate(amounts):
-            cell = summary.cell(row=row, column=2 + i, value=round(amt, 2))
-            cell.number_format = "#,##0.00"
+            cell = summary.cell(row=row, column=2 + i,
+                                value=round(amt, 2) if amt else None)
+            if amt:
+                cell.number_format = "#,##0.00"
             cell.alignment = right
-        total_cell = summary.cell(
-            row=row, column=total_col, value=f"=SUM(B{row}:M{row})"
-        )
-        total_cell.font = bold
+        total_cell = summary.cell(row=row, column=total_col,
+                                  value=f"=SUM(B{row}:M{row})")
         total_cell.number_format = "#,##0.00"
+        total_cell.font = bold
         total_cell.alignment = right
+        for col in range(1, total_col + 1):
+            summary.cell(row=row, column=col).border = border
         row += 1
 
-    total_row = row
-    summary.cell(row=total_row, column=1, value="Total").font = bold
-    for i in range(2, 2 + len(months)):
-        col = openpyxl.utils.get_column_letter(i)
-        c = summary.cell(
-            row=total_row,
-            column=i,
-            value=f"=SUM({col}{header_row + 1}:{col}{row - 1})",
-        )
-        c.font = bold
-        c.number_format = "#,##0.00"
-        c.alignment = right
-    gt = summary.cell(
-        row=total_row, column=total_col, value=f"=SUM(N{header_row + 1}:N{row - 1})"
-    )
-    gt.font = bold
+    # Grand total row
+    summary.cell(row=row, column=1, value="TOTAL").font = bold
+    for i, amt in enumerate(grand_totals):
+        cell = summary.cell(row=row, column=2 + i,
+                            value=round(amt, 2) if amt else None)
+        if amt:
+            cell.number_format = "#,##0.00"
+        cell.font = bold
+        cell.alignment = right
+    gt = summary.cell(row=row, column=total_col,
+                      value=f"=SUM(B{row}:M{row})")
     gt.number_format = "#,##0.00"
+    gt.font = bold
     gt.alignment = right
+    for col in range(1, total_col + 1):
+        summary.cell(row=row, column=col).border = border
+        summary.cell(row=row, column=col).fill = PatternFill("solid", fgColor="D9E1F2")
 
-    summary.column_dimensions["A"].width = 36
-    for i in range(2, 2 + len(months) + 1):
-        summary.column_dimensions[openpyxl.utils.get_column_letter(i)].width = 12
-
-    for r in range(header_row, total_row + 1):
-        for c in range(1, total_col + 1):
-            summary.cell(row=r, column=c).border = border
+    summary.column_dimensions["A"].width = 40
+    for i in range(2, total_col + 1):
+        summary.column_dimensions[get_column_letter(i)].width = 12
+    summary.freeze_panes = "B4"
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     tmp.close()
@@ -1053,7 +976,6 @@ async def dashboard_annual_report(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=f"Annual Report {year}.xlsx",
     )
-
 
 # ============ REQUISITIONS ============
 #
@@ -1895,161 +1817,6 @@ async def get_income_stats(year: str | None = None, db: Session = Depends(get_db
         "by_company": by_company,
         "monthly_totals": monthly_totals,
     }
-
-
-@app.get("/api/dashboard/monthly-report")
-async def monthly_report_excel(year: str | None = None, db: Session = Depends(get_db)):
-    import openpyxl
-    from openpyxl.styles import Font, Alignment, Border, Side
-    import tempfile
-
-    year = (year or datetime.utcnow().strftime("%Y")).strip()
-
-    incomes = db.query(Income).filter(Income.period.like(f"{year}%")).all()
-    expenses = (
-        db.query(Requisition)
-        .filter(Requisition.period.like(f"{year}%"))
-        .all()
-    )
-
-    wb = openpyxl.Workbook()
-    bold = Font(bold=True)
-    thin = Side(style="thin", color="CCCCCC")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    right = Alignment(horizontal="right")
-    center = Alignment(horizontal="center")
-
-    months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
-
-    ws = wb.active
-    ws.title = f"Summary {year}"
-
-    ws.merge_cells("A1:O1")
-    ws["A1"] = f"Income vs Expenses — {year}"
-    ws["A1"].font = Font(bold=True, size=14)
-
-    header_row = 3
-    ws.cell(row=header_row, column=1, value="Type").font = bold
-    ws.cell(row=header_row, column=2, value="Name").font = bold
-    for i, m in enumerate(months):
-        c = ws.cell(row=header_row, column=3 + i, value=m)
-        c.font = bold
-        c.alignment = center
-    ws.cell(row=header_row, column=3 + len(months), value="Total").font = bold
-
-    total_col = 3 + len(months)
-
-    def add_row(r, type_label, name, monthly_values):
-        ws.cell(row=r, column=1, value=type_label)
-        ws.cell(row=r, column=2, value=name)
-        for i, v in enumerate(monthly_values):
-            c = ws.cell(row=r, column=3 + i, value=round(v, 2))
-            c.number_format = "#,##0.00"
-            c.alignment = right
-        total = ws.cell(row=r, column=total_col, value=f"=SUM(C{r}:N{r})")
-        total.font = bold
-        total.number_format = "#,##0.00"
-        total.alignment = right
-        return r + 1
-
-    income_by_company: dict = {}
-    for r in incomes:
-        company = r.company_name or "Unknown"
-        _, month = _split_period(r.period)
-        if month not in [f"{i+1:02d}" for i in range(12)]:
-            continue
-        idx = int(month) - 1
-        income_by_company.setdefault(company, [0.0]*12)
-        income_by_company[company][idx] += r.total_rm or 0
-
-    r = header_row + 1
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
-    ws.cell(row=r, column=1, value="INCOME (RM)").font = Font(bold=True, size=11)
-    r += 1
-    for company in sorted(income_by_company.keys()):
-        r = add_row(r, "Income", company, income_by_company[company])
-
-    expense_by_cat: dict = {}
-    for e in expenses:
-        cat = e.category_name or "Uncategorized"
-        _, month = _split_period(e.period)
-        if month not in [f"{i+1:02d}" for i in range(12)]:
-            continue
-        idx = int(month) - 1
-        expense_by_cat.setdefault(cat, [0.0]*12)
-        expense_by_cat[cat][idx] += e.total_amount or 0
-
-    r += 1
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
-    ws.cell(row=r, column=1, value="EXPENSES (HKD)").font = Font(bold=True, size=11)
-    r += 1
-    for cat in sorted(expense_by_cat.keys()):
-        r = add_row(r, "Expense", cat, expense_by_cat[cat])
-
-    ws.column_dimensions["A"].width = 12
-    ws.column_dimensions["B"].width = 30
-    for i in range(12):
-        ws.column_dimensions[openpyxl.utils.get_column_letter(3+i)].width = 12
-    ws.column_dimensions[openpyxl.utils.get_column_letter(total_col)].width = 14
-
-    for rr in range(header_row, r):
-        for cc in range(1, total_col + 1):
-            ws.cell(row=rr, column=cc).border = border
-
-    wsi = wb.create_sheet("Income Detail")
-    hdr = ["Invoice No", "Company", "Customer", "Period", "Date", "Currency", "Total RM", "Total HKD", "Status"]
-    for i, h in enumerate(hdr, start=1):
-        wsi.cell(row=1, column=i, value=h).font = bold
-
-    for idx, inc in enumerate(incomes, start=2):
-        wsi.cell(row=idx, column=1, value=inc.invoice_number)
-        wsi.cell(row=idx, column=2, value=inc.company_name)
-        wsi.cell(row=idx, column=3, value=inc.customer_name)
-        wsi.cell(row=idx, column=4, value=inc.period)
-        wsi.cell(row=idx, column=5, value=inc.date_issued.strftime("%Y-%m-%d") if inc.date_issued else "")
-        wsi.cell(row=idx, column=6, value=inc.currency)
-        wsi.cell(row=idx, column=7, value=inc.total_rm).number_format = "#,##0.00"
-        wsi.cell(row=idx, column=8, value=inc.total_hkd or 0).number_format = "#,##0.00"
-        wsi.cell(row=idx, column=9, value=inc.status)
-
-    wsi.column_dimensions["A"].width = 18
-    wsi.column_dimensions["B"].width = 30
-    wsi.column_dimensions["C"].width = 30
-    for col in ["D","E","F","G","H","I"]:
-        wsi.column_dimensions[col].width = 14
-
-    wse = wb.create_sheet("Expense Detail")
-    hdr = ["PR No", "Company", "Category", "Payee", "Period", "Total HKD", "Status"]
-    for i, h in enumerate(hdr, start=1):
-        wse.cell(row=1, column=i, value=h).font = bold
-
-    for idx, exp in enumerate(expenses, start=2):
-        wse.cell(row=idx, column=1, value=exp.pr_number)
-        wse.cell(row=idx, column=2, value=exp.company_name)
-        wse.cell(row=idx, column=3, value=exp.category_name)
-        wse.cell(row=idx, column=4, value=exp.payee_name)
-        wse.cell(row=idx, column=5, value=exp.period)
-        wse.cell(row=idx, column=6, value=exp.total_amount).number_format = "#,##0.00"
-        wse.cell(row=idx, column=7, value=exp.status)
-
-    wse.column_dimensions["A"].width = 18
-    wse.column_dimensions["B"].width = 30
-    wse.column_dimensions["C"].width = 22
-    wse.column_dimensions["D"].width = 25
-    wse.column_dimensions["E"].width = 12
-    wse.column_dimensions["F"].width = 14
-    wse.column_dimensions["G"].width = 12
-
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
-    tmp.close()
-    wb.save(tmp.name)
-
-    return FileResponse(
-        tmp.name,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=f"Monthly Report {year}.xlsx",
-    )
-
 
 # ============ HELPERS ============
 
