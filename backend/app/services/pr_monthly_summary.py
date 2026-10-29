@@ -1,3 +1,10 @@
+"""
+Generate a monthly PR Summary workbook matching the HK PRs Summary template.
+
+Sheet 1             : PAYMENT REQUISITION SUMMARY-<D.M.YYYY>
+<SHORT>_<YYYY>_PR_N : one tab per requisition (merged header table + bordered line items)
+<SHORT>_<YYYY>_RP_N_Detail List : one tab per reimbursement PR (grouped by category, then date)
+"""
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
@@ -5,6 +12,7 @@ from typing import List, Dict, Any
 import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
+from sqlalchemy import func
 
 from ..config import settings
 
@@ -23,9 +31,7 @@ CENTER = Alignment(horizontal="center", vertical="center")
 LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
 HEADER_FILL = PatternFill("solid", fgColor="D9E1F2")
 
-# "HK$" + standard two-decimal number format
 HK_MONEY_FMT = '"HK$"#,##0.00'
-HK_MONEY_FMT_NEG = '"HK$"-#,##0.00'
 
 
 # ---------- helpers ----------
@@ -54,7 +60,6 @@ def _fmt_date(d, fmt="%d/%m/%Y") -> str:
 
 
 def _money(cell, amount, bold=False):
-    """Write a numeric cell with money format; skip zero/None entirely."""
     if amount in (None, 0, 0.0):
         return
     cell.value = float(amount)
@@ -62,6 +67,26 @@ def _money(cell, amount, bold=False):
     cell.alignment = RIGHT
     if bold:
         cell.font = BOLD
+
+
+# Category display order used on reimbursement tabs
+PREFERRED_CAT_ORDER = [
+    "Transportation",
+    "Drinks & Meals With Clients",
+    "Entertainment",
+    "Office Equipment & Supplies",
+    "Sundry Expenses",
+    "Hotel",
+    "Travel Expenses",
+    "Research and Development Expenses",
+]
+
+
+def _cat_key(cat: str):
+    return (
+        PREFERRED_CAT_ORDER.index(cat) if cat in PREFERRED_CAT_ORDER else 999,
+        cat or "",
+    )
 
 
 # ============================================================
@@ -75,7 +100,6 @@ def _build_summary_sheet(wb, title_date: datetime, requisitions: List[Any]):
     ws["A1"].font = TITLE_FONT
     ws.merge_cells("A1:I1")
 
-    # Split HK vs non-HK (rows that don't belong to the HK budget)
     hk_items = []
     non_hk_items = []
     for r in requisitions:
@@ -108,15 +132,12 @@ def _build_summary_sheet(wb, title_date: datetime, requisitions: List[Any]):
             ws.cell(row=row, column=6, value=req.category_name or req.nature or "").alignment = LEFT
             ws.cell(row=row, column=7, value=req.payee_name or "").alignment = LEFT
             _money(ws.cell(row=row, column=8), req.total_amount)
-
             for col in range(2, 9):
                 ws.cell(row=row, column=col).border = BORDER
-
             row += 1
             sn += 1
 
         last_data = row - 1
-
         if first_data <= last_data:
             ws.cell(row=row, column=2, value="合计").font = BOLD
             total_cell = ws.cell(
@@ -132,14 +153,12 @@ def _build_summary_sheet(wb, title_date: datetime, requisitions: List[Any]):
 
         return row, sn, first_data, last_data
 
-    # ---- HK block ----
     row = 2
     _header_row(row)
     row += 1
     row, sn_next, hk_first, hk_last = _write_block(hk_items, row, sn_start=1)
-    hk_total_row = hk_last + 1  # 合计 row
+    hk_total_row = hk_last + 1
 
-    # ---- Divider line ----
     row += 1
     ws.cell(
         row=row, column=1,
@@ -147,35 +166,29 @@ def _build_summary_sheet(wb, title_date: datetime, requisitions: List[Any]):
     ).font = ITALIC
     row += 1
 
-    # ---- Non-HK header ----
     _header_row(row, labels=["SN.", "PR No.", "", "Petty Method",
                              "Nature", "Name of Payee:", "Amount payable:"])
     row += 1
 
-    # ---- Non-HK block ----
     row, sn_next, nonhk_first, nonhk_last = _write_block(
         non_hk_items, row, sn_start=sn_next
     )
     nonhk_total_row = nonhk_last + 1
 
-    # ---- Sub Total ----
     row += 1
     ws.cell(row=row, column=7, value="Sub Total").font = BOLD
     ws.cell(row=row, column=7).alignment = RIGHT
-
     formula_parts = []
     if hk_items:
         formula_parts.append(f"H{hk_total_row}")
     if non_hk_items:
         formula_parts.append(f"H{nonhk_total_row}")
     sub_expr = "=" + "+".join(formula_parts) if formula_parts else 0
-
     st_cell = ws.cell(row=row, column=8, value=sub_expr)
     st_cell.number_format = HK_MONEY_FMT
     st_cell.font = BOLD
     st_cell.alignment = RIGHT
 
-    # Column widths
     widths = {"A": 22, "B": 6, "C": 20, "D": 8, "E": 16, "F": 42, "G": 42, "H": 16, "I": 6}
     for col, w in widths.items():
         ws.column_dimensions[col].width = w
@@ -190,13 +203,11 @@ def _build_requisition_sheet(wb, req, line_items: List[Any], applicant: str):
     tab = f"{short}_{_clean_pr_suffix(req.pr_number)}"
     ws = wb.create_sheet(title=tab[:31])
 
-    # Title
     ws["B2"] = "PAYMENT REQUISITION"
     ws["B2"].font = TITLE_FONT
     ws["B2"].alignment = CENTER
     ws.merge_cells("B2:J2")
 
-    # ----- Header table with merged cells (5 rows × 2 cols) -----
     header_fields = [
         ("PR No.:",         req.pr_number or ""),
         ("Applicant:",      applicant or "Juliana"),
@@ -213,25 +224,20 @@ def _build_requisition_sheet(wb, req, line_items: List[Any], applicant: str):
         lc.font = BOLD
         lc.alignment = LEFT
         lc.border = BORDER
-        # merge label across B:C so the label has room
         ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
 
         vc = ws.cell(row=r, column=4, value=value)
         vc.alignment = LEFT
         vc.border = BORDER
-        # merge value across D:J
         ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=10)
 
         if isinstance(value, (int, float)):
             vc.number_format = HK_MONEY_FMT
             vc.alignment = RIGHT
 
-    # ----- Line items table -----
-    # Columns: B=Date, C=Particular, D=F=HK$, G-I=Rate, J=US$
-    table_start = header_start_row + len(header_fields) + 2  # leave one blank row
+    table_start = header_start_row + len(header_fields) + 2
 
     headers = ["Date", "Particular", "", "", "HK$", "", "", "Rate", "", "US$"]
-    # merge header row so "Particular" spans C:D, "HK$" spans E:F, "Rate" spans G:H
     hr = table_start
     for idx, text in enumerate(headers, start=2):
         c = ws.cell(row=hr, column=idx, value=text or None)
@@ -239,25 +245,25 @@ def _build_requisition_sheet(wb, req, line_items: List[Any], applicant: str):
         c.fill = HEADER_FILL
         c.alignment = CENTER
         c.border = HEADER_BORDER
-    # merge
-    ws.merge_cells(start_row=hr, start_column=3, end_row=hr, end_column=4)  # Particular
-    ws.merge_cells(start_row=hr, start_column=5, end_row=hr, end_column=6)  # HK$
-    ws.merge_cells(start_row=hr, start_column=8, end_row=hr, end_column=9)  # Rate
+    ws.merge_cells(start_row=hr, start_column=3, end_row=hr, end_column=4)
+    ws.merge_cells(start_row=hr, start_column=5, end_row=hr, end_column=6)
+    ws.merge_cells(start_row=hr, start_column=8, end_row=hr, end_column=9)
     ws.cell(row=hr, column=3, value="Particular")
     ws.cell(row=hr, column=5, value="Expenses in HK$")
     ws.cell(row=hr, column=8, value="Exch Rate")
 
-    # Rows
     r = hr + 1
     nature_lc = (req.category_name or req.nature or "").lower()
     is_reimbursement = "reimburse" in nature_lc
     data_start = r
 
     if is_reimbursement:
+        # Aggregate by category; sort by preferred order
         groups: Dict[str, float] = {}
         for li in line_items:
             cat = (li.category or "Miscellaneous").strip() or "Miscellaneous"
             groups[cat] = groups.get(cat, 0.0) + float(li.amount_hkd or 0)
+        groups = dict(sorted(groups.items(), key=lambda kv: _cat_key(kv[0])))
 
         period_label = (req.period or "")[:7]
         for cat, total in groups.items():
@@ -267,14 +273,13 @@ def _build_requisition_sheet(wb, req, line_items: List[Any], applicant: str):
             ws.merge_cells(start_row=r, start_column=5, end_row=r, end_column=6)
             _money(ws.cell(row=r, column=5), total)
             ws.merge_cells(start_row=r, start_column=8, end_row=r, end_column=9)
-            ws.merge_cells(start_row=r, start_column=10, end_row=r, end_column=10)
-
             for col in range(2, 11):
                 ws.cell(row=r, column=col).border = BORDER
             r += 1
             if r > data_start + 15:
                 break
     else:
+        # Non-reimbursement: line items in date order (query already sorted)
         for li in line_items:
             ws.cell(row=r, column=2, value=_fmt_date(li.date)).alignment = CENTER
             ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
@@ -288,12 +293,10 @@ def _build_requisition_sheet(wb, req, line_items: List[Any], applicant: str):
             if r > data_start + 15:
                 break
 
-    # Sub-total row
     r_total = r + 1
     ws.merge_cells(start_row=r_total, start_column=2, end_row=r_total, end_column=6)
     ws.cell(row=r_total, column=2, value="Sub Total").font = BOLD
     ws.cell(row=r_total, column=2).alignment = RIGHT
-    ws.merge_cells(start_row=r_total, start_column=7, end_row=r_total, end_column=7)
     total_cell = ws.cell(row=r_total, column=7, value=f"=SUM(E{data_start}:E{r-1})")
     total_cell.number_format = HK_MONEY_FMT
     total_cell.font = BOLD
@@ -301,7 +304,6 @@ def _build_requisition_sheet(wb, req, line_items: List[Any], applicant: str):
     for col in range(2, 11):
         ws.cell(row=r_total, column=col).border = BORDER
 
-    # Cheque No.
     cr = r_total + 2
     ws.merge_cells(start_row=cr, start_column=2, end_row=cr, end_column=3)
     ws.cell(row=cr, column=2, value="Cheque No.").font = BOLD
@@ -309,7 +311,6 @@ def _build_requisition_sheet(wb, req, line_items: List[Any], applicant: str):
     ws.merge_cells(start_row=cr, start_column=4, end_row=cr, end_column=5)
     ws.cell(row=cr, column=4, value="-")
 
-    # Signature block
     sig_row = cr + 3
     ws.cell(row=sig_row, column=2, value="Juliana").font = ITALIC
     ws.cell(row=sig_row + 1, column=2, value="_________________________")
@@ -317,7 +318,6 @@ def _build_requisition_sheet(wb, req, line_items: List[Any], applicant: str):
     ws.cell(row=sig_row + 5, column=2, value="Approved by:").font = BOLD
     ws.cell(row=sig_row + 6, column=2, value="_________________________")
 
-    # Widths
     widths = {"A": 3, "B": 14, "C": 20, "D": 20, "E": 15, "F": 8,
               "G": 8, "H": 10, "I": 10, "J": 12}
     for col, w in widths.items():
@@ -347,18 +347,26 @@ def _build_detail_sheet(wb, req, line_items: List[Any], applicant: str):
         c.fill = HEADER_FILL
         c.alignment = CENTER
         c.border = HEADER_BORDER
-    # merge the RMB/HKD group under H and I
-    ws.merge_cells(start_row=hr, start_column=6, end_row=hr, end_column=6)
-    ws.merge_cells(start_row=hr, start_column=7, end_row=hr, end_column=7)
     ws.merge_cells(start_row=hr, start_column=8, end_row=hr, end_column=9)
-    ws.merge_cells(start_row=hr, start_column=10, end_row=hr, end_column=10)
-    ws.merge_cells(start_row=hr, start_column=11, end_row=hr, end_column=11)
-    ws.merge_cells(start_row=hr, start_column=12, end_row=hr, end_column=12)
 
+    # Group by category
     groups: Dict[str, List[Any]] = {}
     for li in line_items:
         cat = (li.category or "Miscellaneous").strip() or "Miscellaneous"
         groups.setdefault(cat, []).append(li)
+
+    # Categories in the reference order
+    groups = dict(sorted(groups.items(), key=lambda kv: _cat_key(kv[0])))
+
+    # Within each category, sort items by date ascending (nulls last)
+    for cat in groups:
+        groups[cat].sort(
+            key=lambda li: (
+                li.date is None,
+                li.date or datetime.max,
+                li.item_number or 0,
+            )
+        )
 
     r = hr + 1
     for cat, items in groups.items():
@@ -371,18 +379,15 @@ def _build_detail_sheet(wb, req, line_items: List[Any], applicant: str):
             ws.cell(row=r, column=4, value=_fmt_date(li.date)).alignment = CENTER
             ws.cell(row=r, column=5, value=li.description or "").alignment = LEFT
             _money(ws.cell(row=r, column=9), float(li.amount_hkd or 0))
-
             for col in range(2, 13):
                 ws.cell(row=r, column=col).border = BORDER
             r += 1
 
-        # Category subtotal in L
         ws.cell(row=cat_start, column=12,
                 value=f"=SUM(I{cat_start}:I{r-1})").number_format = HK_MONEY_FMT
         ws.cell(row=cat_start, column=12).font = BOLD
         ws.cell(row=cat_start, column=12).alignment = RIGHT
 
-    # Grand totals
     tr = r + 1
     ws.merge_cells(start_row=tr, start_column=6, end_row=tr, end_column=8)
     ws.cell(row=tr, column=6, value="Sub Total").font = BOLD
@@ -425,10 +430,17 @@ def build_monthly_pr_summary_workbook(db, year: str, month: str) -> str:
     from ..models import Requisition, LineItem
 
     period = f"{year}-{str(month).zfill(2)}"
+
+    # Sort requisitions by earliest line-item date; nulls last; tie-break PR number
     rows = (
         db.query(Requisition)
+        .outerjoin(LineItem, LineItem.requisition_id == Requisition.id)
         .filter(Requisition.period == period)
-        .order_by(Requisition.pr_number.asc())
+        .group_by(Requisition.id)
+        .order_by(
+            func.coalesce(func.min(LineItem.date), Requisition.created_date),
+            Requisition.pr_number.asc(),
+        )
         .all()
     )
 
@@ -442,7 +454,11 @@ def build_monthly_pr_summary_workbook(db, year: str, month: str) -> str:
         line_items = (
             db.query(LineItem)
             .filter(LineItem.requisition_id == req.id)
-            .order_by(LineItem.item_number)
+            .order_by(
+                LineItem.date.is_(None),   # nulls last
+                LineItem.date.asc(),
+                LineItem.item_number.asc(),
+            )
             .all()
         )
         _build_requisition_sheet(wb, req, line_items, req.applicant)

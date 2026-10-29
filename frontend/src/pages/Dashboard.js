@@ -101,21 +101,21 @@ function Dashboard() {
       <div className="row g-3 mb-4">
         <div className="col-lg-4 col-md-6">
           <div className="stat-card h-100">
-            <div className="stat-label">Amount Paid · {lastMonth.label}</div>
+            <div className="stat-label">Amount Paid · Last Month · {lastMonth.label}</div>
             <div className="stat-value success">HK${fmt(lastMonth.total)}</div>
           </div>
         </div>
 
         <div className="col-lg-4 col-md-6">
           <div className="stat-card h-100">
-            <div className="stat-label">Requisitions · {thisMonth.label}</div>
+            <div className="stat-label">Requisitions · Current Month · {thisMonth.label}</div>
             <div className="stat-value primary">{thisMonth.count}</div>
           </div>
         </div>
 
         <div className="col-lg-4 col-md-6">
           <div className="stat-card h-100">
-            <div className="stat-label">Amount Paid · {thisMonth.label}</div>
+            <div className="stat-label">Amount Paid · Current Month · {thisMonth.label}</div>
             <div className="stat-value success">HK${fmt(thisMonth.total)}</div>
           </div>
         </div>

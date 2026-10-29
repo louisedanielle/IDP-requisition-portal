@@ -32,7 +32,7 @@ function Requisitions() {
 
   useEffect(() => { load(); }, []);
 
-  const isOpen = (key, defaultOpen = true) =>
+  const isOpen = (key, defaultOpen = false) =>
     open[key] === undefined ? defaultOpen : open[key];
 
   const toggle = (key) => setOpen((prev) => ({ ...prev, [key]: !isOpen(key) }));
