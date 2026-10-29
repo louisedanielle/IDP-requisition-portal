@@ -1,9 +1,11 @@
 """
 Annual Report Excel generator.
 
-Produces a single-company workbook where the reimbursement nature is broken
-down into its line-item categories (Transportation, Entertainment, etc.)
-instead of being lumped under a single "Reimbursement" row.
+- Renders one row per top-level category.
+- For reimbursement categories, expands into indented sub-rows (one per
+  line-item category: Transportation, Hotel, Entertainment, ...).
+- Optionally pre-seeds with every category the company has ever used,
+  so categories that had zero activity this year still appear.
 """
 from datetime import datetime
 from typing import Dict, List, Tuple
@@ -24,9 +26,9 @@ SECTION_FONT = Font(bold=True, size=11)
 ROW_FONT = Font(size=10)
 TOTAL_FONT = Font(bold=True, size=11)
 
-HEADER_FILL = PatternFill("solid", fgColor="1A4D8F")   # dark blue
-SECTION_FILL = PatternFill("solid", fgColor="E8F0FB")  # light blue
-TOTAL_FILL = PatternFill("solid", fgColor="D9E1F2")    # mid blue
+HEADER_FILL = PatternFill("solid", fgColor="1A4D8F")
+SECTION_FILL = PatternFill("solid", fgColor="E8F0FB")
+TOTAL_FILL = PatternFill("solid", fgColor="D9E1F2")
 
 THIN = Side(style="thin", color="BFBFBF")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
@@ -60,49 +62,38 @@ def build_company_annual_sheet(
     wb,
     company_name: str,
     year: str,
-    requisitions: List,             # list of Requisition ORM rows
+    requisitions: List,
     line_items_by_req: Dict[str, List],
+    known_categories: List[str] | None = None,
+    known_reimb_subcategories: List[str] | None = None,
 ):
-    """
-    Add one worksheet with:
-
-        Category | Jan | Feb | ... | Dec | Total
-
-    Reimbursement PRs are expanded so each line-item category
-    (Transportation, Entertainment, ...) gets its own row.
-    """
     sheet_name = (company_name[:28] + "..") if len(company_name) > 31 else company_name
     ws = wb.create_sheet(title=sheet_name)
 
     # ---------- Title block ----------
     ws.merge_cells("A1:N1")
-    title = ws["A1"]
-    title.value = f"{company_name}"
-    title.font = COMPANY_FONT
-    title.alignment = LEFT
+    ws["A1"].value = company_name
+    ws["A1"].font = COMPANY_FONT
+    ws["A1"].alignment = LEFT
 
     ws.merge_cells("A2:N2")
-    subtitle = ws["A2"]
-    subtitle.value = f"Annual Report {year}"
-    subtitle.font = TITLE_FONT
-    subtitle.alignment = LEFT
+    ws["A2"].value = f"Annual Report {year}"
+    ws["A2"].font = TITLE_FONT
+    ws["A2"].alignment = LEFT
 
-    # ---------- Build the grid ----------
-    # grid[top_category][sub_category][month_index] = amount
+    # ---------- Build grid ----------
+    # grid[top_cat][sub_cat][month_index] = amount
     grid: Dict[str, Dict[str, List[float]]] = {}
     unknown_month: Dict[str, Dict[str, float]] = {}
 
     for req in requisitions:
         top_cat = (req.category_name or req.nature or "Uncategorized").strip()
         _, month = _split_period(req.period)
-
         is_reimb = _is_reimbursement(req.category_name, req.nature)
 
         if is_reimb:
-            # Expand by line-item category
             lines = line_items_by_req.get(str(req.id), [])
             if not lines:
-                # fallback: one lump sum under "Miscellaneous"
                 sub_cat = "Miscellaneous"
                 amount = float(req.total_amount or 0)
                 if month.isdigit():
@@ -123,7 +114,7 @@ def build_company_annual_sheet(
                         unknown_month.get(top_cat, {}).get(sub_cat, 0) + amount
                     )
         else:
-            sub_cat = top_cat  # single row
+            sub_cat = top_cat
             amount = float(req.total_amount or 0)
             if month.isdigit():
                 grid.setdefault(top_cat, {}).setdefault(sub_cat, [0.0]*12)[int(month)-1] += amount
@@ -131,6 +122,16 @@ def build_company_annual_sheet(
                 unknown_month.setdefault(top_cat, {})[sub_cat] = (
                     unknown_month.get(top_cat, {}).get(sub_cat, 0) + amount
                 )
+
+    # Pre-seed with known categories (even if this year had zero)
+    if known_categories:
+        for cat in known_categories:
+            grid.setdefault(cat, {})
+            if _is_reimbursement(cat, cat) and known_reimb_subcategories:
+                for sub in known_reimb_subcategories:
+                    grid[cat].setdefault(sub, [0.0] * 12)
+            else:
+                grid[cat].setdefault(cat, [0.0] * 12)
 
     # ---------- Header row ----------
     header_row = 4
@@ -154,21 +155,28 @@ def build_company_annual_sheet(
     grand_monthly = [0.0] * 12
 
     for top_cat in sorted(grid.keys()):
-        # Section header (the top-level nature, e.g. "Reimbursement", "Salary")
-        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=total_col)
-        section = ws.cell(row=r, column=1, value=f"▸ {top_cat}")
-        section.font = SECTION_FONT
-        section.fill = SECTION_FILL
-        section.alignment = LEFT
-        for col in range(1, total_col + 1):
-            ws.cell(row=r, column=col).border = BORDER
-            ws.cell(row=r, column=col).fill = SECTION_FILL
-        r += 1
+        sub_cats = grid[top_cat]
+        is_reimb_group = _is_reimbursement(top_cat, top_cat)
 
-        # One row per sub-category
-        for sub_cat in sorted(grid[top_cat].keys()):
-            amounts = grid[top_cat][sub_cat]
-            ws.cell(row=r, column=1, value=f"    {sub_cat}").alignment = LEFT
+        # Section band only for reimbursement groups
+        if is_reimb_group:
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=total_col)
+            section = ws.cell(row=r, column=1, value=f"▸ {top_cat}")
+            section.font = SECTION_FONT
+            section.fill = SECTION_FILL
+            section.alignment = LEFT
+            for col in range(1, total_col + 1):
+                ws.cell(row=r, column=col).border = BORDER
+                ws.cell(row=r, column=col).fill = SECTION_FILL
+            r += 1
+
+        for sub_cat in sorted(sub_cats.keys()):
+            amounts = sub_cats[sub_cat]
+            label = f"    {sub_cat}" if is_reimb_group else sub_cat
+            cell_label = ws.cell(row=r, column=1, value=label)
+            cell_label.alignment = LEFT
+            cell_label.font = ROW_FONT
+
             for i, amt in enumerate(amounts):
                 cell = ws.cell(row=r, column=2 + i,
                                value=round(amt, 2) if amt else None)
@@ -176,11 +184,13 @@ def build_company_annual_sheet(
                     cell.number_format = MONEY_FMT
                 cell.alignment = RIGHT
                 grand_monthly[i] += amt
+
             row_total = ws.cell(row=r, column=total_col,
                                 value=f"=SUM(B{r}:M{r})")
             row_total.number_format = MONEY_FMT
             row_total.alignment = RIGHT
             row_total.font = ROW_FONT
+
             for col in range(1, total_col + 1):
                 ws.cell(row=r, column=col).border = BORDER
             r += 1
@@ -201,7 +211,7 @@ def build_company_annual_sheet(
                     ws.cell(row=r, column=col).border = BORDER
                 r += 1
 
-    # ---------- Grand total row ----------
+    # ---------- Grand total ----------
     r += 1
     ws.cell(row=r, column=1, value="TOTAL").font = TOTAL_FONT
     for i, amt in enumerate(grand_monthly):
@@ -221,14 +231,12 @@ def build_company_annual_sheet(
         ws.cell(row=r, column=col).fill = TOTAL_FILL
         ws.cell(row=r, column=col).border = BORDER
 
-    # ---------- Column widths ----------
+    # ---------- Layout ----------
     ws.column_dimensions["A"].width = 38
     for i in range(2, total_col + 1):
         ws.column_dimensions[get_column_letter(i)].width = 12
-    ws.column_dimensions["A"].freeze_panes = "B5"
     ws.freeze_panes = "B5"
 
-    # ---------- Print setup ----------
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1
     ws.sheet_properties.pageSetUpPr.fitToPage = True

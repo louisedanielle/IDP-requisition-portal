@@ -777,14 +777,12 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
         "by_company_this_year": ordered,
     }
 
-
 # ============ ANNUAL REPORT EXCEL ============
 
 from .services.annual_report import build_company_annual_sheet
 
 
 def _load_lines_by_req(db, requisitions) -> dict:
-    """Preload line items for every requisition in one query."""
     req_ids = [r.id for r in requisitions]
     if not req_ids:
         return {}
@@ -797,6 +795,41 @@ def _load_lines_by_req(db, requisitions) -> dict:
     for li in lines:
         grouped.setdefault(str(li.requisition_id), []).append(li)
     return grouped
+
+
+def _known_categories_for_company(db, company_id):
+    """
+    All top-level categories ever used by this company (any year)
+    plus every reimbursement sub-category (line-item category)
+    ever used inside its reimbursement PRs.
+    """
+    cats = [
+        c[0] for c in (
+            db.query(Requisition.category_name)
+            .filter(
+                Requisition.company_id == company_id,
+                Requisition.category_name.isnot(None),
+            )
+            .distinct()
+            .all()
+        )
+        if c[0]
+    ]
+    subs = [
+        c[0] for c in (
+            db.query(LineItem.category)
+            .join(Requisition, Requisition.id == LineItem.requisition_id)
+            .filter(
+                Requisition.company_id == company_id,
+                Requisition.category_name.ilike("%reimburse%"),
+                LineItem.category.isnot(None),
+            )
+            .distinct()
+            .all()
+        )
+        if c[0]
+    ]
+    return cats, subs
 
 
 @app.get("/api/companies/{company_id}/annual-report")
@@ -824,10 +857,15 @@ async def company_annual_report(
         .all()
     )
     lines_by_req = _load_lines_by_req(db, rows)
+    known_cats, known_subs = _known_categories_for_company(db, company.id)
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
-    build_company_annual_sheet(wb, company.name, year, rows, lines_by_req)
+    build_company_annual_sheet(
+        wb, company.name, year, rows, lines_by_req,
+        known_categories=known_cats,
+        known_reimb_subcategories=known_subs,
+    )
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     tmp.close()
@@ -868,7 +906,6 @@ async def dashboard_annual_report(
     summary = wb.active
     summary.title = f"Summary {year}"
 
-    # ----- styles -----
     thin = Side(style="thin", color="BFBFBF")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     header_fill = PatternFill("solid", fgColor="1A4D8F")
@@ -892,7 +929,6 @@ async def dashboard_annual_report(
         summary.cell(row=header_row, column=2 + i, value=m)
     total_col = 2 + len(months)
     summary.cell(row=header_row, column=total_col, value="Total")
-
     for col in range(1, total_col + 1):
         c = summary.cell(row=header_row, column=col)
         c.font = header_font
@@ -914,9 +950,14 @@ async def dashboard_annual_report(
             .all()
         )
         lines_by_req = _load_lines_by_req(db, rows)
+        known_cats, known_subs = _known_categories_for_company(db, company.id)
 
         if rows:
-            build_company_annual_sheet(wb, company.name, year, rows, lines_by_req)
+            build_company_annual_sheet(
+                wb, company.name, year, rows, lines_by_req,
+                known_categories=known_cats,
+                known_reimb_subcategories=known_subs,
+            )
 
         amounts = [0.0] * 12
         for r in rows:
